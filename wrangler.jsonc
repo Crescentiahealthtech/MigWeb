@@ -1,14 +1,24 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "migration",
+  // The Worker that already exists in the Cloudflare account (Workers → migweb).
+  "name": "migweb",
+  "main": "src/worker.js",
   "compatibility_date": "2026-06-23",
   "observability": {
     "enabled": true
   },
+  // public/ is served as is: / (the Apps Script app, unchanged) and /ledger/.
+  // Everything else (/api/…) reaches src/worker.js.
   "assets": {
-    "directory": "."
+    "directory": "./public",
+    "binding": "ASSETS"
   },
-  "compatibility_flags": [
-    "nodejs_compat"
-  ]
+  "vars": {
+    "SUPABASE_URL": "https://vexldriovssjcvtqttvb.supabase.co",
+    "FIREBASE_PROJECT_ID": "cresrxdemo"
+  },
+  // SUPABASE_SECRET_KEY and ALLOWED_EMAILS are secrets, set once in the
+  // dashboard (Settings → Variables and Secrets) or with `npx wrangler secret
+  // put NAME`; they are never in this file. See README.md.
+  "keep_vars": true
 }
