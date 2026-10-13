@@ -39,6 +39,7 @@
 // ============================================================================
 
 import { sessionLedgerQueries, buildLedger, doctorsFrom, resolveScope, dayKey } from './ledger.js';
+import { splitSnapshot, redact, hiddenFor } from './snapshots.js';
 import { registerQuery, allPatients, masterDirectory, demographicsQuery, demographics, timelineQuery, timeline,
          patientKey } from './patients.js';
 
@@ -79,27 +80,51 @@ export async function rpc(request, env, ctx, supabase) {
   if (origin && origin !== url.origin) return json({ ok: false, e: 'Not allowed from another site.' }, 403);
   const len = Number(request.headers.get('Content-Length') || 0);
   if (len > MAX_RPC_BYTES) return json({ ok: false, e: 'That request is too large.' }, 413);
-  let body = await request.text();
-  if (body.length > MAX_RPC_BYTES) return json({ ok: false, e: 'That request is too large.' }, 413);
-
-  let call = null;
-  try { call = JSON.parse(body); } catch (e) { call = null; }
-  const fn = call && typeof call.fn === 'string' ? call.fn : '';
-  const args = call && Array.isArray(call.args) ? call.args : [];
+  // THE CPU BUDGET. On Cloudflare's free plan a request may use 10 ms of
+  // CPU, and one that goes over takes down every request running in the
+  // same isolate with it (the browser sees "Failed to fetch"). So a call
+  // passed to Apps Script is never decoded or parsed here: its bytes go
+  // through as they came, and so does the answer. Only the function's name
+  // is read, from the first bytes of the body ({"fn":"…","args":…}, as the
+  // page's stand-in for google.script.run sends it).
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (bytes.length > MAX_RPC_BYTES) return json({ ok: false, e: 'That request is too large.' }, 413);
+  const fn = fnOf(bytes);
 
   if (EDGE[fn] && edgeOn(env, fn)) {
     try {
+      const call = JSON.parse(new TextDecoder().decode(bytes));   // small: a name and a few ids
+      const args = Array.isArray(call && call.args) ? call.args : [];
       const v = await EDGE[fn](args, env, ctx, supabase);
+      if (v instanceof Response) return v;
       if (v) return json({ ok: true, v }, 200, { 'X-CresRx-Source': 'supabase' });
     } catch (e) {
       console.error('edge ' + fn + ' fell back to Apps Script:', e && e.message);
     }
   }
-  if (FLUSH_AFTER[fn] && call) body = JSON.stringify({ fn, args, flush: FLUSH_AFTER[fn] });
-  return forward(env, body);
+  return forward(env, FLUSH_AFTER[fn] ? withFlush(bytes, FLUSH_AFTER[fn]) : bytes);
 }
 
-/** The call to the deployment's doPost, its answer back unchanged. */
+/** The function's name from the start of the body, or ''. */
+export function fnOf(bytes) {
+  const head = new TextDecoder().decode(bytes.subarray(0, 160));
+  const m = /^\s*\{\s*"fn"\s*:\s*"([A-Za-z$_][\w$]{0,80})"/.exec(head);
+  return m ? m[1] : '';
+}
+
+/** The same body with "flush": [...] added before its closing brace, without parsing it. */
+export function withFlush(bytes, sheets) {
+  let end = bytes.length - 1;
+  while (end >= 0 && bytes[end] !== 0x7d) end--;                 // the last '}'
+  if (end < 0) return bytes;
+  const tail = new TextEncoder().encode(',"flush":' + JSON.stringify(sheets) + '}');
+  const out = new Uint8Array(end + tail.length);
+  out.set(bytes.subarray(0, end), 0);
+  out.set(tail, end);
+  return out;
+}
+
+/** The call to the deployment's doPost, its answer back unchanged and unread. */
 async function forward(env, body) {
   let res;
   try {
@@ -109,13 +134,19 @@ async function forward(env, body) {
   } catch (e) {
     return json({ ok: false, e: 'The app server could not be reached. Please try again.' }, 502);
   }
-  const out = await res.text();
-  if (!/^\s*\{/.test(out)) {
-    return json({ ok: false, e: /accounts\.google\.com|ServiceLogin|signin/i.test(out)
-      ? 'The app server asks for a Google sign-in: set the deployment\'s access to "Anyone" and deploy again.'
-      : 'The app server gave no answer (deploy the latest version of the app). Status ' + res.status + '.' }, 502);
+  // doPost answers JSON (ContentService); anything else is Google's own
+  // page (a sign-in, an error) and is read only to say which.
+  if (/json/i.test(res.headers.get('Content-Type') || '')) {
+    return new Response(res.body, { status: 200, headers: secure({ 'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store', 'X-CresRx-Source': 'apps-script' }) });
   }
-  return new Response(out, { status: 200, headers: secure({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-CresRx-Source': 'apps-script' }) });
+  const out = await res.text();
+  if (/^\s*\{/.test(out)) {
+    return new Response(out, { status: 200, headers: secure({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-CresRx-Source': 'apps-script' }) });
+  }
+  return json({ ok: false, e: /accounts\.google\.com|ServiceLogin|signin/i.test(out)
+    ? 'The app server asks for a Google sign-in: set the deployment\'s access to "Anyone" and deploy again.'
+    : 'The app server gave no answer (deploy the latest version of the app). Status ' + res.status + '.' }, 502);
 }
 
 /** One server call to Apps Script from here, its value or null. */
@@ -166,7 +197,8 @@ export async function identity(token, env, ctx) {
   const id = { username: String(v.username || ''), role: String(v.role || '').toLowerCase(), doctorId: String(v.doctorId || ''),
                dutyMoIds: Array.isArray(v.dutyMoIds) ? v.dutyMoIds.map(String) : [], edge: v.edge === true,
                permissions: Array.isArray(v.permissions) ? v.permissions.map(String) : [],
-               actor: v.actor && typeof v.actor === 'object' ? v.actor : null };
+               actor: v.actor && typeof v.actor === 'object' ? v.actor : null,
+               uiHidden: v.uiHidden && typeof v.uiHidden === 'object' ? v.uiHidden : {} };
   if (MEMO.size > 500) MEMO.clear();
   MEMO.set(h, { id, until: now + IDENTITY_SECONDS * 1000 });
   if (cache) {
@@ -226,9 +258,54 @@ async function patientRead(token, permission, env, ctx, supabase, queries, port,
   return v;
 }
 
+// ---------------------------------------------------------------------------
+// The Command Center from its ready-made answer (src/snapshots.js)
+// ---------------------------------------------------------------------------
+
+const SNAPSHOT_FRESH_MS = 60 * 1000;          // older than this: ask Apps Script for a new one, in the background
+const SNAPSHOT_MAX_MS = 10 * 60 * 1000;       // older than this: Apps Script answers, as before
+
+/**
+ * getDashboardData(role, bust, sessionToken) — Admin_Dashboard_Logic.gs.
+ * The automatic loads come from the answer Apps Script last left in
+ * Supabase; the Refresh button (bust) still asks Apps Script, which stores
+ * what it computes. Same permission (dashboard.read), same split of who sees
+ * money (accounts.read), same cards taken out per person (crescUiRedact_).
+ */
+async function dashboard([role, bust, token], env, ctx, supabase) {
+  if (bust === true) return null;
+  const who = await identity(token, env, ctx);
+  if (!who || !who.edge || !who.permissions.includes('dashboard.read')) return null;
+  const key = 'dash:' + (who.permissions.includes('accounts.read') ? 'FIN' : 'CLIN');
+  const snap = splitSnapshot(await supabase('snapshot_get', { key }, true));
+  if (!snap) return null;
+  const age = Date.now() - snap.made;
+  if (!(age >= 0 && age <= SNAPSHOT_MAX_MS)) return null;
+  if (age > SNAPSHOT_FRESH_MS) {
+    // One open dashboard asks for a new answer; the rest are served this one.
+    const refresh = supabase('snapshot_claim', { key, ms: SNAPSHOT_FRESH_MS }).then((mine) => {
+      if (mine === true) return appsScript(env, 'getDashboardData', [role, true, token]);
+    }).catch((e) => console.error('dashboard refresh:', e && e.message));
+    if (ctx && ctx.waitUntil) ctx.waitUntil(refresh);
+  }
+  const headers = { 'X-CresRx-Source': 'supabase', 'X-CresRx-Age': String(Math.round(age / 1000)) };
+  if (hiddenFor(who.uiHidden, 'dash.').length) {
+    const data = redact(JSON.parse(snap.dataText), who.uiHidden, 'dash.');
+    return raw(JSON.stringify({ ok: true, v: { success: true, data, message: 'snapshot' } }), headers);
+  }
+  // Nobody's cards to take out: the stored text goes on as it is.
+  return raw('{"ok":true,"v":{"success":true,"data":' + snap.dataText + ',"message":"snapshot"}}', headers);
+}
+
+/** An answer already in the shape the page expects ({ok, v}), sent as it is. */
+function raw(text, headers) {
+  return new Response(text, { status: 200, headers: secure(Object.assign({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }, headers)) });
+}
+
 /** The calls the Worker answers itself, by the name the page calls them. */
 const EDGE = {
   fetchDailyLedgerScoped: edgeLedger,
+  getDashboardData: dashboard,
   // getAllPatients(sessionToken) — CodeMV.gs
   getAllPatients: ([token], env, ctx, sb) => patientRead(token, 'patient.read', env, ctx, sb, registerQuery(),
     ([r]) => allPatients(r), { what: 'PatientRegister', id: 'ALL', endpoint: 'getAllPatients' }),
@@ -302,7 +379,36 @@ export async function shell(request, env, ctx) {
     return page('<iframe src="' + attr(exec + '?t=' + Date.now()) + '" title="DEMO CLINIC" ' +
                 'allow="camera; clipboard-write; fullscreen" allowfullscreen></iframe>', 200);
   }
+  // TEMPORARY, while screens move off Apps Script: the status badge
+  // (public/migration/status.js). Remove this line and that file when done.
+  if (String(env.MIGRATION_BADGE || '').toLowerCase() !== 'off') {
+    const tag = '<script src="/migration/status.js"></script>';
+    const at = /<head[^>]*>/i.test(html) ? /<head[^>]*>/i : /<html[^>]*>/i;
+    html = at.test(html) ? html.replace(at, (h) => h + tag) : tag + html;
+  }
   return text(html, 200, 'text/html; charset=utf-8', 'no-store, no-cache, must-revalidate, max-age=0');
+}
+
+/**
+ * What has moved off Apps Script and what has not, for the status badge
+ * (GET /api/migration). TEMPORARY, like the badge.
+ */
+export const MIGRATION_SCREENS = [
+  { label: 'Appointments · Daily Ledger', fns: ['fetchDailyLedgerScoped'], day: 'Day 0' },
+  { label: 'Patients · search list', fns: ['getAllPatients'], day: 'Day 1' },
+  { label: 'EMR · patient directory', fns: ['getMasterPatientDirectory'], day: 'Day 1' },
+  { label: 'Appointments · booking form patient details', fns: ['getPatientDemographics'], day: 'Day 1' },
+  { label: 'EMR · clinical timeline (outpatients; admitted patients still Apps Script)', fns: ['buildLongitudinalTimeline'], day: 'Day 1' },
+  { label: 'Command Center', fns: ['getDashboardData'], day: 'Day 2' },
+  { label: 'Finance Hub and Master Ledger', fns: ['getAccountsDashboard'], day: 'Day 3' },
+  { label: 'Billing ledger and Hospital Billing lists', fns: ['hb_getInvoices'], day: 'Day 4' },
+  { label: 'Pharmacy stock, sales and GST reports', fns: [], day: 'Day 5' },
+  { label: 'Lab queues, IP ward roster and running bill, admitted patients\' timelines', fns: [], day: 'Day 6' },
+  { label: 'All writes (bookings, bills, consultations) — stay on Apps Script until the server stage', fns: [], day: 'later' }
+];
+export function migrationStatus(env) {
+  return { screens: MIGRATION_SCREENS.map((g) => ({ label: g.label, day: g.day,
+    done: g.fns.length > 0 && g.fns.every((f) => EDGE[f] && edgeOn(env, f)) })) };
 }
 
 export function notSetUp() {

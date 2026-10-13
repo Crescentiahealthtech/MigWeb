@@ -35,7 +35,7 @@ function network() {
     url = String(url);
     if (url.startsWith(EXEC + '?shell=1')) return new Response('<html><script>window.CRESC_BUILD="b1"</script>app</html>');
     if (url === EXEC) {
-      const b = JSON.parse(init.body);
+      const b = JSON.parse(typeof init.body === 'string' ? init.body : new TextDecoder().decode(init.body));
       log.apps.push(b);
       if (b.fn === 'getEdgeIdentity') return Response.json({ ok: true, v: SESSIONS[b.args[0]] || { success: false } });
       return Response.json({ ok: true, v: { from: 'apps-script', fn: b.fn } });
@@ -115,4 +115,43 @@ test('/rpc refuses other sites and GET; nothing works without APP_EXEC_URL', asy
   assert.equal(r.status, 503);
   r = await worker.fetch(new Request('https://migweb.example/'), env({ APP_EXEC_URL: '' }), ctx);
   assert.equal(r.status, 503);
+});
+
+test('a passed-through call goes byte for byte, and its answer comes back unread', async () => {
+  const sent = [];
+  globalThis.caches = { default: { match: async () => undefined, put: async () => {} } };
+  globalThis.fetch = async (url, init = {}) => {
+    sent.push(init.body);
+    return new Response('{"ok":true,"v":"' + 'x'.repeat(200000) + '"}', { headers: { 'content-type': 'application/json; charset=utf-8' } });
+  };
+  // A body JSON.parse would choke on still goes through: nothing here parses it.
+  const odd = '{"fn":"saveBigThing","args":[' + '1,'.repeat(50000) + '1]} ';
+  const r = await worker.fetch(new Request('https://migweb.example/rpc', { method: 'POST', body: odd }), env(), ctx);
+  assert.equal(new TextDecoder().decode(sent[0]), odd);
+  assert.equal((await r.text()).length, 200000 + 18);
+  assert.equal(r.headers.get('x-cresrx-source'), 'apps-script');
+});
+
+test('flush is added without parsing the body', async () => {
+  const { fnOf, withFlush } = await import('../src/app.js');
+  const b = new TextEncoder().encode('{"fn":"bookAppointmentScoped","args":[{"a":"}"},"T"]}\n');
+  assert.equal(fnOf(b), 'bookAppointmentScoped');
+  assert.deepEqual(JSON.parse(new TextDecoder().decode(withFlush(b, ['Appointments']))),
+    { fn: 'bookAppointmentScoped', args: [{ a: '}' }, 'T'], flush: ['Appointments'] });
+  assert.equal(fnOf(new TextEncoder().encode('{"args":[],"fn":"x"}')), '');      // name not first: pass through untouched
+});
+
+test('the app page carries the migration badge, and /api/migration lists what has moved', async () => {
+  network();
+  const page = await (await worker.fetch(new Request('https://migweb.example/'), env(), ctx)).text();
+  assert.match(page, /<script src="\/migration\/status.js"><\/script>/);
+  const off = await (await worker.fetch(new Request('https://migweb.example/?v=2'), env({ MIGRATION_BADGE: 'off' }), ctx)).text();
+  assert.doesNotMatch(off, /migration\/status.js/);
+  const list = await (await worker.fetch(new Request('https://migweb.example/api/migration'), env(), ctx)).json();
+  const done = list.screens.filter((s) => s.done).map((s) => s.label);
+  assert.ok(done.includes('Appointments · Daily Ledger') && done.includes('Patients · search list'));
+  assert.ok(list.screens.some((s) => s.done && /Command Center/.test(s.label)));
+  assert.ok(list.screens.some((s) => !s.done && /Finance Hub/.test(s.label)));
+  const none = await (await worker.fetch(new Request('https://migweb.example/api/migration'), env({ EDGE_OFF: 'all' }), ctx)).json();
+  assert.equal(none.screens.filter((s) => s.done).length, 0);
 });
