@@ -14,7 +14,7 @@
     "binding": "ASSETS"
   },
   "vars": {
-    "SUPABASE_URL": "https://vexldriovssjcvtqttvb.supabase.co",
+    "SUPABASE_URL": "https://bzjwdpxygozgdwpdzixr.supabase.co",
     "FIREBASE_PROJECT_ID": "cresrxdemo"
   },
   // SUPABASE_SECRET_KEY and ALLOWED_EMAILS are secrets, set once in the
