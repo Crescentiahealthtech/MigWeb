@@ -8,7 +8,7 @@ the [MIGRATION](https://github.com/Crescentiahealthtech/MIGRATION) repo).
 | Path          | What                                                        |
 |---------------|-------------------------------------------------------------|
 | `/`           | **the whole app**, its page fetched from Apps Script and served from here (no Google frame) |
-| `/rpc`        | every server call the app makes: to Apps Script, **except the Daily Ledger's, answered here from Supabase** |
+| `/rpc`        | every server call the app makes: to Apps Script, **except the reads moved here, answered from Supabase** (Daily Ledger; Patients: register, directory, demographics, timeline) |
 | `/ledger/`    | a stand-alone read-only ledger with Google sign-in          |
 | `/api/ledger` | its data: `GET ?date=yyyy-MM-dd&doctor=DOC001`              |
 | `/api/health` | is the Worker up; can it reach Supabase; is the app address set |
@@ -33,7 +33,22 @@ Ledger's data comes from (`src/app.js`):
 
 Under the table the screen says which one answered:
 "Loaded in 300 ms from Cloudflare + Supabase" or "… from Apps Script".
-`EDGE_LEDGER = off` on the Worker sends the ledger to Apps Script again.
+`EDGE_OFF` on the Worker sends calls back to Apps Script: a function name
+(`getAllPatients`), a comma-separated list, or `all`. (`EDGE_LEDGER = off`
+still works for the ledger.)
+
+### The moved reads (the plan: MIGRATION `docs/supabase/PLAN_OFF_APPS_SCRIPT.md`)
+
+| Apps Script function | Port | Permission | Audited |
+|---|---|---|---|
+| `fetchDailyLedgerScoped` | `src/ledger.js` | doctor scope | — |
+| `getAllPatients`, `getMasterPatientDirectory` | `src/patients.js` | `patient.read` | yes, the register read |
+| `getPatientDemographics` | `src/patients.js` | `patient.read` | — |
+| `buildLongitudinalTimeline` (outpatients; a patient with an admission goes to Apps Script) | `src/patients.js` | `emr.read` | yes, the patient read |
+
+An audited read is recorded in Supabase (`edge_log_read`) before the answer
+goes back, and reaches the `Audit_Log` sheet with the next minute's sync; if
+it cannot be recorded, Apps Script answers instead.
 
 Checked against Apps Script on the demo year by the MIGRATION repo's
 `tools/sbmirror.js`: 99 cases (admin, reception, every doctor, refusals) for

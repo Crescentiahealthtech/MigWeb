@@ -97,9 +97,11 @@ test('Apps Script answers the ledger when the copy is off, the session unknown, 
 
 test('a status change or booking asks Apps Script to copy the ledger\'s sheets before answering', async () => {
   const log = network();
-  for (const fn of ['updateAppointmentStatus', 'bookAppointmentScoped', 'barcodeUpdateAppointment', 'registerPatient']) {
+  for (const [fn, sheets] of [['updateAppointmentStatus', ['Appointments', 'Patients']], ['bookAppointmentScoped', ['Appointments', 'Patients']],
+                              ['barcodeUpdateAppointment', ['Appointments', 'Patients']], ['registerPatient', ['Patients']],
+                              ['saveOPEncounterScoped', ['Appointments', 'Patients', 'OP_Encounters']], ['processPatientDischarge', ['IP_Admissions']]]) {
     await worker.fetch(call(fn, ['A1', 'Arrived', 'ADMIN']), env(), ctx);
-    assert.deepEqual(log.apps.at(-1), { fn, args: ['A1', 'Arrived', 'ADMIN'], flush: ['Appointments', 'Patients'] });
+    assert.deepEqual(log.apps.at(-1), { fn, args: ['A1', 'Arrived', 'ADMIN'], flush: sheets });
   }
 });
 

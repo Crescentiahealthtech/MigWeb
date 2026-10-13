@@ -39,6 +39,8 @@
 // ============================================================================
 
 import { sessionLedgerQueries, buildLedger, doctorsFrom, resolveScope, dayKey } from './ledger.js';
+import { registerQuery, allPatients, masterDirectory, demographicsQuery, demographics, timelineQuery, timeline,
+         patientKey } from './patients.js';
 
 const SHELL_EDGE_SECONDS = 20;
 const IDENTITY_SECONDS = 120;
@@ -46,13 +48,22 @@ const MAX_RPC_BYTES = 20 * 1024 * 1024;
 const PASS_THROUGH = /^(privacy|rights|doc|k|verifyDS|viewReport)$/;
 const EXEC_RE = /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/;
 
-/** Calls after which the ledger's sheets are copied before the answer comes back. */
+/**
+ * Calls after which some sheets are copied to Supabase before the answer
+ * comes back (doPost's "flush", Web_Proxy.gs), so the screens answered from
+ * the copy show the change at once. Each lists the sheets it can change.
+ */
+const APPT = ['Appointments', 'Patients'];
 export const FLUSH_AFTER = {
-  updateAppointmentStatus: 1, setAppointmentTime: 1, barcodeUpdateAppointment: 1, submitNewAppointment: 1,
-  bookAppointmentScoped: 1, saveOPEncounterScoped: 1, portalBookAppointment: 1, portalCancelAppointment: 1,
-  registerPatient: 1, updatePatientProfile: 1
+  updateAppointmentStatus: APPT, setAppointmentTime: APPT, barcodeUpdateAppointment: APPT, submitNewAppointment: APPT,
+  bookAppointmentScoped: APPT, portalBookAppointment: APPT, portalCancelAppointment: APPT,
+  saveOPEncounterScoped: ['Appointments', 'Patients', 'OP_Encounters'],
+  createOPReferral: APPT, respondToOPReferral: ['Appointments', 'OP_Encounters'],
+  registerPatient: ['Patients'], updatePatientProfile: ['Patients'], saveUserProfile: ['Patients'],
+  savePatientAllergies: ['Patients'],
+  saveNewAdmissionLedger: ['IP_Admissions', 'Patients'], processBedTransfer: ['IP_Admissions'],
+  processPatientDischarge: ['IP_Admissions']
 };
-const FLUSH_SHEETS = ['Appointments', 'Patients'];
 
 export const execUrl = (env) => String((env && (env.APP_EXEC_URL || env.APP_EXEC_URL_DEFAULT)) || '').trim();
 export const hasApp = (env) => EXEC_RE.test(execUrl(env));
@@ -76,15 +87,15 @@ export async function rpc(request, env, ctx, supabase) {
   const fn = call && typeof call.fn === 'string' ? call.fn : '';
   const args = call && Array.isArray(call.args) ? call.args : [];
 
-  if (fn === 'fetchDailyLedgerScoped' && String(env.EDGE_LEDGER || '').toLowerCase() !== 'off' && env.SUPABASE_SECRET_KEY) {
+  if (EDGE[fn] && edgeOn(env, fn)) {
     try {
-      const v = await edgeLedger(args, env, ctx, supabase);
+      const v = await EDGE[fn](args, env, ctx, supabase);
       if (v) return json({ ok: true, v }, 200, { 'X-CresRx-Source': 'supabase' });
     } catch (e) {
-      console.error('edge ledger fell back to Apps Script:', e && e.message);
+      console.error('edge ' + fn + ' fell back to Apps Script:', e && e.message);
     }
   }
-  if (FLUSH_AFTER[fn] === 1 && call) body = JSON.stringify({ fn, args, flush: FLUSH_SHEETS });
+  if (FLUSH_AFTER[fn] && call) body = JSON.stringify({ fn, args, flush: FLUSH_AFTER[fn] });
   return forward(env, body);
 }
 
@@ -153,7 +164,9 @@ export async function identity(token, env, ctx) {
   const v = await appsScript(env, 'getEdgeIdentity', [token]);
   if (!v || !v.success) return null;
   const id = { username: String(v.username || ''), role: String(v.role || '').toLowerCase(), doctorId: String(v.doctorId || ''),
-               dutyMoIds: Array.isArray(v.dutyMoIds) ? v.dutyMoIds.map(String) : [], edge: v.edge === true };
+               dutyMoIds: Array.isArray(v.dutyMoIds) ? v.dutyMoIds.map(String) : [], edge: v.edge === true,
+               permissions: Array.isArray(v.permissions) ? v.permissions.map(String) : [],
+               actor: v.actor && typeof v.actor === 'object' ? v.actor : null };
   if (MEMO.size > 500) MEMO.clear();
   MEMO.set(h, { id, until: now + IDENTITY_SECONDS * 1000 });
   if (cache) {
@@ -187,6 +200,61 @@ export async function edgeLedger(args, env, ctx, supabase) {
   const out = buildLedger({ appointments, patients, doctors, scope, dateKey: date });
   out.edge = { ms: Date.now() - t0, syncedAt: appointments.synced_at || null };
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Patients from Supabase (src/patients.js)
+// ---------------------------------------------------------------------------
+
+/**
+ * One of Apps Script's patient reads answered from the copy, or null for
+ * Apps Script to answer. The order is the original's: who is asking and
+ * whether they may (crescRequire_: the permission must be among the
+ * session's), the answer, then the audit entry (dpdpLogRead_) — written to
+ * Supabase before the answer goes back, and if it cannot be written, Apps
+ * Script answers (and audits) instead.
+ */
+async function patientRead(token, permission, env, ctx, supabase, queries, port, audit) {
+  const who = await identity(token, env, ctx);
+  if (!who || !who.edge || !who.actor || !who.permissions.includes(permission)) return null;
+  const res = await supabase('mirror_query', { queries });
+  const v = port((res && res.results) || []);
+  if (v === null || v === undefined) return null;
+  if (audit) {
+    await supabase('edge_log_read', { actor: who.actor, what: audit.what, entityId: audit.id, details: { endpoint: audit.endpoint } });
+  }
+  return v;
+}
+
+/** The calls the Worker answers itself, by the name the page calls them. */
+const EDGE = {
+  fetchDailyLedgerScoped: edgeLedger,
+  // getAllPatients(sessionToken) — CodeMV.gs
+  getAllPatients: ([token], env, ctx, sb) => patientRead(token, 'patient.read', env, ctx, sb, registerQuery(),
+    ([r]) => allPatients(r), { what: 'PatientRegister', id: 'ALL', endpoint: 'getAllPatients' }),
+  // getMasterPatientDirectory(sessionToken) — EMR_MasterTimeline_Logic.gs
+  getMasterPatientDirectory: ([token], env, ctx, sb) => patientRead(token, 'patient.read', env, ctx, sb, registerQuery(),
+    ([r]) => masterDirectory(r), { what: 'PatientRegister', id: 'ALL', endpoint: 'getMasterPatientDirectory' }),
+  // getPatientDemographics(patientId, sessionToken) — Appointment.gs
+  getPatientDemographics: ([patientId, token], env, ctx, sb) => patientRead(token, 'patient.read', env, ctx, sb,
+    demographicsQuery(patientKey(patientId)), ([r]) => demographics(r, patientId), null),
+  // buildLongitudinalTimeline(patientId, sessionToken) — EMR_MasterTimeline_Logic.gs
+  buildLongitudinalTimeline: ([patientId, token], env, ctx, sb) => patientRead(token, 'emr.read', env, ctx, sb,
+    timelineQuery(patientKey(patientId)), (rs) => timeline(rs, patientId),
+    { what: 'Patient', id: String(patientId || ''), endpoint: 'buildLongitudinalTimeline' })
+};
+
+/**
+ * Whether the Worker answers this call itself. EDGE_OFF (a setting) names
+ * calls to leave to Apps Script, comma-separated, or "all"; EDGE_LEDGER=off
+ * still works for the ledger.
+ */
+function edgeOn(env, fn) {
+  if (!env.SUPABASE_SECRET_KEY) return false;
+  const off = String(env.EDGE_OFF || '').split(/[\s,]+/).filter(Boolean);
+  if (off.includes('all') || off.includes(fn)) return false;
+  if (fn === 'fetchDailyLedgerScoped' && String(env.EDGE_LEDGER || '').toLowerCase() === 'off') return false;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
