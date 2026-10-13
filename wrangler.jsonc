@@ -14,7 +14,7 @@
     "binding": "ASSETS"
   },
   "vars": {
-    "SUPABASE_URL": "https://vexldriovssjcvtqttvb.supabase.co",
+    "SUPABASE_URL": "https://bzjwdpxygozgdwpdzixr.supabase.co",
     "FIREBASE_PROJECT_ID": "cresrxdemo"
   },
   // APP_EXEC_URL (the Apps Script deployment's …/exec address), SUPABASE_SECRET_KEY
