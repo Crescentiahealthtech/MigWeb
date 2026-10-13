@@ -3,15 +3,45 @@
 The CresRx web front on Cloudflare Workers, moving off Apps Script one screen
 at a time. Google Sheets is still the system of record; Apps Script keeps a
 copy of the workbook in Supabase current every minute (`Supabase_Mirror.gs` in
-the [MIGRATION](https://github.com/Crescentiahealthtech/MIGRATION) repo), and
-the screens here read that copy directly — no Apps Script in the path.
+the [MIGRATION](https://github.com/Crescentiahealthtech/MIGRATION) repo).
 
 | Path          | What                                                        |
 |---------------|-------------------------------------------------------------|
-| `/`           | the existing app (the Apps Script web app in a frame)       |
-| `/ledger/`    | **Appointment Ledger**, read-only, from Supabase            |
+| `/`           | **the whole app**, its page fetched from Apps Script and served from here (no Google frame) |
+| `/rpc`        | every server call the app makes: to Apps Script, **except the Daily Ledger's, answered here from Supabase** |
+| `/ledger/`    | a stand-alone read-only ledger with Google sign-in          |
 | `/api/ledger` | its data: `GET ?date=yyyy-MM-dd&doctor=DOC001`              |
-| `/api/health` | is the Worker up, can it reach Supabase                     |
+| `/api/health` | is the Worker up; can it reach Supabase; is the app address set |
+
+## The app's Daily Ledger, out of Apps Script
+
+The app looks and works exactly as before: same sign-in (password +
+authenticator), same screens, same buttons. The difference is where the Daily
+Ledger's data comes from (`src/app.js`):
+
+1. The screen asks for the day's ledger (`fetchDailyLedgerScoped`).
+2. The Worker asks Apps Script once who the session is (`getEdgeIdentity`;
+   remembered for 2 minutes), then reads the day from Supabase and builds the
+   ledger itself (`src/ledger.js`, the Apps Script function line for line).
+3. Status changes, deletions, scans, bookings, time changes and patient edits
+   still go to Apps Script, which writes the sheet and then copies the change
+   to Supabase **before answering** (the Worker asks for this: "flush"), so
+   the ledger the screen reloads shows it.
+4. If anything is off (Supabase reads switched off with
+   `RUN_SB_04b_readsOff`, the minute sync stopped, Supabase down, an unknown
+   session), Apps Script answers instead, as before.
+
+Under the table the screen says which one answered:
+"Loaded in 300 ms from Cloudflare + Supabase" or "… from Apps Script".
+`EDGE_LEDGER = off` on the Worker sends the ledger to Apps Script again.
+
+Checked against Apps Script on the demo year by the MIGRATION repo's
+`tools/sbmirror.js`: 99 cases (admin, reception, every doctor, refusals) for
+both this path and `/ledger/`, identical; a status change, a booking and a
+deletion through the Worker show on its ledger at once.
+
+**Changes made directly in the spreadsheet** (typing in the sheet) reach the
+copy with the next minute's sync, not at once.
 
 ## Two repositories, two ways of deploying
 
@@ -24,7 +54,7 @@ the screens here read that copy directly — no Apps Script in the path.
 A screen moves by being rebuilt here; its Apps Script version stays until the
 new one has been used for a while, then is retired in MIGRATION.
 
-## What the Appointment Ledger does
+## The stand-alone /ledger/ page
 
 1. You sign in with Google (Firebase project `cresrxdemo`, the same one the
    Apps Script app uses).
@@ -47,49 +77,51 @@ identical). `npm test` here runs the offline checks.
 (MFA). This page does not yet, which is why only the emails in
 `ALLOWED_EMAILS` get in. Keep it to the demo workbook until MFA is added.
 
-## Deploy (first time)
+## Deploy
 
-### 1. Secrets on the Worker
+### 1. Settings on the Worker
 
-Cloudflare dashboard → **Workers & Pages** → **migweb** → **Settings** →
+Cloudflare → **Workers & Pages** → **migweb** → **Settings** →
 **Variables and Secrets** → **Add**:
 
 | Name                  | Type   | Value                                                                 |
 |-----------------------|--------|-----------------------------------------------------------------------|
+| `APP_EXEC_URL`        | Secret | the Apps Script deployment's address, `https://script.google.com/macros/s/…/exec` — the same one the Worker behind your clinic address uses (its Variables and Secrets), or Apps Script → Deploy → Manage deployments |
 | `SUPABASE_SECRET_KEY` | Secret | the same `sb_secret_…` key Apps Script uses (Supabase → Project Settings → API Keys) |
-| `ALLOWED_EMAILS`      | Secret | the Google accounts allowed in, comma-separated, e.g. `you@gmail.com, frontdesk@gmail.com` |
+| `ALLOWED_EMAILS`      | Secret | for `/ledger/` only: Google accounts allowed in, comma-separated       |
 
-Each email must also be the **Email Address** of an Active row on the Users
-sheet. Never put the secret key in a file in this repo.
+Never put these in a file in this repo. (`SUPABASE_URL` and
+`FIREBASE_PROJECT_ID` are in `wrangler.jsonc`; `keep_vars` stops a deploy
+from wiping what you set in the dashboard.)
 
-(`SUPABASE_URL` and `FIREBASE_PROJECT_ID` are in `wrangler.jsonc`;
-`keep_vars` stops a deploy from wiping what you set in the dashboard.)
+### 2. Apps Script
 
-### 2. Let Firebase accept the Worker's address
+Deploy the MIGRATION branch's code to the **same** deployment
+(Deploy → Manage deployments → edit → New version): it adds
+`getEdgeIdentity`, the "flush" in `doPost` and the "Loaded … from" line.
+Deployment access must be "Anyone" (it already is if your clinic address
+serves the app without Google's frame). Supabase reads on (`RUN_SB_04_readsOn`)
+and the minute sync running (`RUN_SB_03_startAutoSync`).
 
-Firebase console → project **cresrxdemo** → **Authentication** →
-**Settings** → **Authorized domains** → **Add domain**:
-`migweb.<your-subdomain>.workers.dev` (shown on the Worker's overview page),
-and any custom domain you attach later. Without it, sign-in says the
-address is not authorised.
+### 3. Deploy the Worker, then try it
 
-### 3. Deploy
-
-Either
-
-- **From GitHub (recommended):** Workers & Pages → migweb → Settings →
-  **Build** → connect `Crescentiahealthtech/MigWeb`, production branch
-  `main`, deploy command `npx wrangler deploy`. Merging to `main` deploys;
-  other branches get preview URLs if "non-production branch builds" is on.
-- **From a computer:** `npm install`, `npx wrangler login`,
-  `npx wrangler deploy`.
-
-### 4. Check
+Merge to `main` (with the Git build connected) or `npx wrangler deploy`. Then:
 
 - `https://migweb.<subdomain>.workers.dev/api/health` →
-  `{"ok":true,"supabase":"ok",…}`
-- `https://migweb.<subdomain>.workers.dev/ledger/` → sign in → today's
-  ledger. The footer shows the load time and when the copy was last updated.
+  `"supabase":"ok"`, `"app":"set"`
+- `https://migweb.<subdomain>.workers.dev/` → the app; sign in as usual →
+  Appointments → Daily Ledger. Under the table: "… from Cloudflare + Supabase".
+
+### 4. Your clinic address
+
+When you are happy with it, move `migration.crescentiahealthtech.com` to
+this Worker: remove it from the Worker that serves it now (that Worker →
+Settings → Domains & Routes), then migweb → Settings → Domains & Routes →
+Add → Custom domain. Going back is the same in reverse.
+
+Firebase (Google sign-in on `/ledger/`, and in the app if it offers Google
+sign-in): Authentication → Settings → Authorized domains must list each
+address you use.
 
 ## Local development
 
@@ -102,7 +134,8 @@ npm test
 
 ## Files
 
-- `src/worker.js` — routes, sign-in check, the Supabase call
+- `src/worker.js` — routes; `/ledger/`'s sign-in check and its Supabase call
+- `src/app.js` — the app from this address: page, `/rpc`, the Daily Ledger from Supabase
 - `src/auth.js` — Firebase ID token verification (Google's public keys)
 - `src/ledger.js` — the ledger, a line-for-line port of the Apps Script one
 - `public/ledger/index.html` — the page

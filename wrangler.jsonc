@@ -7,8 +7,8 @@
   "observability": {
     "enabled": true
   },
-  // public/ is served as is: / (the Apps Script app, unchanged) and /ledger/.
-  // Everything else (/api/…) reaches src/worker.js.
+  // public/ holds /ledger/ and its files. Everything else reaches
+  // src/worker.js: / and /rpc (the whole app, src/app.js) and /api/….
   "assets": {
     "directory": "./public",
     "binding": "ASSETS"
@@ -17,7 +17,8 @@
     "SUPABASE_URL": "https://bzjwdpxygozgdwpdzixr.supabase.co",
     "FIREBASE_PROJECT_ID": "cresrxdemo"
   },
-  // SUPABASE_SECRET_KEY and ALLOWED_EMAILS are secrets, set once in the
+  // APP_EXEC_URL (the Apps Script deployment's …/exec address), SUPABASE_SECRET_KEY
+  // and ALLOWED_EMAILS are set once in the
   // dashboard (Settings → Variables and Secrets) or with `npx wrangler secret
   // put NAME`; they are never in this file. See README.md.
   "keep_vars": true
