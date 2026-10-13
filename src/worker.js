@@ -1,26 +1,30 @@
 // ============================================================================
 // migweb — the CresRx web front, moving off Apps Script one screen at a time.
 // ----------------------------------------------------------------------------
-//   /            the existing app (public/index.html, the Apps Script web app)
-//   /ledger/     the appointment ledger, served from here and read from
-//                Supabase — no Apps Script in the path
+//   /            the whole app, served from here (src/app.js): its page and
+//   /rpc         its server calls go to Apps Script as on the clinic's
+//                address today, except the Daily Ledger's, which is
+//                answered here from Supabase
+//   /ledger/     a stand-alone read-only ledger with Google sign-in
 //   /api/ledger  its data: GET ?date=yyyy-MM-dd&doctor=DOC001
-//   /api/health  is the Worker up, can it reach Supabase
+//   /api/health  is the Worker up, can it reach Supabase and Apps Script
 //
 // Settings (Cloudflare → Workers → migweb → Settings → Variables and Secrets):
+//   APP_EXEC_URL         the Apps Script deployment's …/exec address (the
+//                        same one the clinic's address uses)
 //   SUPABASE_SECRET_KEY  secret: the project's sb_secret_… key (server-side only)
-//   ALLOWED_EMAILS       secret or text: Google accounts allowed in during the
-//                        pilot, comma-separated. Empty = nobody. (The Apps Script
-//                        app also asks for an authenticator code; this pilot
-//                        does not yet, so it is limited to named people.)
+//   ALLOWED_EMAILS       for /ledger/ only: Google accounts allowed in,
+//                        comma-separated. Empty = nobody.
+//   EDGE_LEDGER          "off" sends the app's Daily Ledger to Apps Script too
 //   SUPABASE_URL, FIREBASE_PROJECT_ID   in wrangler.jsonc
 //
-// Read-only: Google Sheets is still the system of record, and the copy in
-// Supabase is kept current by Apps Script (Supabase_Mirror.gs) every minute.
+// Google Sheets is still the system of record; the copy in Supabase is kept
+// current by Apps Script (Supabase_Mirror.gs).
 // ============================================================================
 
 import { verifyFirebaseToken } from './auth.js';
 import { ledgerQueries, buildLedger, doctorsFrom, staffFromUsers, resolveScope, dayKey, todayIST } from './ledger.js';
+import { rpc as appRpc, shell, notSetUp, hasApp } from './app.js';
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -74,7 +78,7 @@ async function ledger(request, env) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     try {
       if (url.pathname === '/api/ledger' && request.method === 'GET') return await ledger(request, env);
@@ -84,9 +88,19 @@ export default {
         if (env.SUPABASE_SECRET_KEY) {
           try { await rpc(env, 'mirror_query', { queries: [] }); supabase = 'ok'; } catch (e) { supabase = e.message; }
         }
-        return json({ ok: true, supabase, ms: Date.now() - t0 });
+        return json({ ok: true, supabase, app: hasApp(env) ? 'set' : 'APP_EXEC_URL not set',
+                      edgeLedger: String(env.EDGE_LEDGER || '').toLowerCase() === 'off' ? 'off' : 'on', ms: Date.now() - t0 });
       }
       if (url.pathname.startsWith('/api/')) return json({ success: false, message: 'Not found.' }, 404);
+      if (url.pathname === '/robots.txt') return new Response('User-agent: *\nDisallow: /\n', { headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'public, max-age=86400' } });
+      if (url.pathname === '/favicon.ico') return new Response(null, { status: 204, headers: { 'Cache-Control': 'public, max-age=86400' } });
+      if (url.pathname === '/rpc') {
+        if (!hasApp(env)) return json({ ok: false, e: 'The app address is not set up on this server yet (APP_EXEC_URL).' }, 503);
+        return await appRpc(request, env, ctx, (fn, p) => rpc(env, fn, p));
+      }
+      if (url.pathname === '/' && (request.method === 'GET' || request.method === 'HEAD')) {
+        return hasApp(env) ? await shell(request, env, ctx) : notSetUp();
+      }
       return env.ASSETS.fetch(request);
     } catch (e) {
       // No detail to the browser: it can carry an ID. Cloudflare's logs have it.

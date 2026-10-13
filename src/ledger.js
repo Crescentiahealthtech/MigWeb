@@ -185,10 +185,16 @@ export function staffFromUsers(result, email) {
   return { ok: false, message: 'The email ' + want + ' is not registered in CresRx. Contact Admin.' };
 }
 
-/** resolveScope_ (Doctor_Core.gs) for a signed-in staff member. */
+/**
+ * resolveScope_ (Doctor_Core.gs) for a signed-in staff member. `staff` is
+ * {username, role} from the Users sheet (the /ledger/ page's Google sign-in:
+ * the doctor is found by Linked_Username), or the app's own session
+ * {username, role, doctorId} (getEdgeIdentity), whose doctorId is used as is.
+ */
 export function resolveScope(staff, doctors, requestedDoctorId) {
   const role = staff.role, req = dcStr(requestedDoctorId);
-  const self = (doctors.find((d) => d.username && d.username.toUpperCase() === staff.username.toUpperCase()) || {}).doctorId || '';
+  const self = staff.doctorId !== undefined ? dcStr(staff.doctorId)
+    : (doctors.find((d) => d.username && d.username.toUpperCase() === staff.username.toUpperCase()) || {}).doctorId || '';
   const base = { ok: true, role, username: staff.username, selfDoctorId: self, message: '' };
   if (role === 'patient') return { ...base, ok: false, mode: 'SET', doctorIds: [], message: 'Not authorised.' };
   if (DC_ROLES_VIEW_ALL.includes(role)) {
@@ -224,6 +230,15 @@ export function ledgerQueries(dateKey) {
     { sheet: 'Doctors', all: true, parts: 'disp' },
     { sheet: 'Appointments', from: dateKey, to: dateKey, parts: 'both' },
     { sheet: 'Patients', rid_from: { q: 2, col: 1 }, parts: 'disp' }
+  ];
+}
+
+/** The same without Users: for a caller the app's session already identifies. */
+export function sessionLedgerQueries(dateKey) {
+  return [
+    { sheet: 'Doctors', all: true, parts: 'disp' },
+    { sheet: 'Appointments', from: dateKey, to: dateKey, parts: 'both' },
+    { sheet: 'Patients', rid_from: { q: 1, col: 1 }, parts: 'disp' }
   ];
 }
 
