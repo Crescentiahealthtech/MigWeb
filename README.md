@@ -37,6 +37,21 @@ Under the table the screen says which one answered:
 (`getAllPatients`), a comma-separated list, or `all`. (`EDGE_LEDGER = off`
 still works for the ledger.)
 
+### The migration badge (temporary)
+
+Every page of the app carries a small badge, bottom-right, added by the Worker
+(`public/migration/status.js`): which server answered the last call, how long
+it took, and for the Command Center how old its stored copy is. Click it for
+the recent calls and the list of what has moved (`/api/migration`). It also
+retries, once, a screen bundle, the consent notice or the build check whose
+connection dropped. Remove it by deleting that file and the line in `shell()`
+(`src/app.js`), or switch it off with `MIGRATION_BADGE=off`.
+
+**CPU.** The free plan allows 10 ms of CPU per request, and a request that
+goes over takes the others in its instance down with it ("Failed to fetch" in
+the browser). Calls passed to Apps Script, and their answers, therefore go
+through unread; only answers the Worker builds itself are parsed.
+
 ### The moved reads (the plan: MIGRATION `docs/supabase/PLAN_OFF_APPS_SCRIPT.md`)
 
 | Apps Script function | Port | Permission | Audited |
@@ -45,6 +60,7 @@ still works for the ledger.)
 | `getAllPatients`, `getMasterPatientDirectory` | `src/patients.js` | `patient.read` | yes, the register read |
 | `getPatientDemographics` | `src/patients.js` | `patient.read` | — |
 | `buildLongitudinalTimeline` (outpatients; a patient with an admission goes to Apps Script) | `src/patients.js` | `emr.read` | yes, the patient read |
+| `getDashboardData` (automatic loads; Refresh still asks Apps Script) | `src/snapshots.js`: the answer Apps Script last stored in Supabase, refreshed in the background when over a minute old | `dashboard.read` (money cards: `accounts.read`) | — |
 
 An audited read is recorded in Supabase (`edge_log_read`) before the answer
 goes back, and reaches the `Audit_Log` sheet with the next minute's sync; if

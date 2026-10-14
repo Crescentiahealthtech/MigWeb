@@ -40,12 +40,12 @@ function network({ auditFails = false, patients = PATIENTS } = {}) {
   globalThis.fetch = async (url, init = {}) => {
     url = String(url);
     if (url === EXEC) {
-      const b = JSON.parse(init.body);
+      const b = JSON.parse(typeof init.body === 'string' ? init.body : new TextDecoder().decode(init.body));
       log.apps.push(b); log.order.push('apps:' + b.fn);
       if (b.fn === 'getEdgeIdentity') return Response.json({ ok: true, v: SESSIONS[b.args[0]] || { success: false } });
       return Response.json({ ok: true, v: { from: 'apps-script', fn: b.fn } });
     }
-    const body = JSON.parse(init.body || '{}').p;
+    const body = JSON.parse(typeof init.body === 'string' ? (init.body || '{}') : new TextDecoder().decode(init.body)).p;
     if (url.endsWith('/rpc/edge_log_read')) {
       log.order.push('audit');
       if (auditFails) return new Response('no', { status: 500 });

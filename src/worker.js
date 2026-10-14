@@ -24,7 +24,7 @@
 
 import { verifyFirebaseToken } from './auth.js';
 import { ledgerQueries, buildLedger, doctorsFrom, staffFromUsers, resolveScope, dayKey, todayIST } from './ledger.js';
-import { rpc as appRpc, shell, notSetUp, hasApp } from './app.js';
+import { rpc as appRpc, shell, notSetUp, hasApp, migrationStatus } from './app.js';
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -32,7 +32,7 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), {
              'x-content-type-options': 'nosniff' }
 });
 
-async function rpc(env, fn, p) {
+async function rpc(env, fn, p, raw) {
   const key = env.SUPABASE_SECRET_KEY || '';
   const headers = { apikey: key, 'content-type': 'application/json' };
   if (!/^sb_/.test(key)) headers.authorization = 'Bearer ' + key;     // a legacy service_role JWT
@@ -40,7 +40,7 @@ async function rpc(env, fn, p) {
     method: 'POST', headers, body: JSON.stringify(p === undefined ? {} : { p })
   });
   if (!res.ok) throw new Error('Supabase ' + fn + ' answered ' + res.status);
-  return res.json();
+  return raw ? res.text() : res.json();     // raw: the reply's text, for an answer passed on unparsed
 }
 
 async function signedIn(request, env) {
@@ -91,12 +91,13 @@ export default {
         return json({ ok: true, supabase, app: hasApp(env) ? 'set' : 'APP_EXEC_URL not set',
                       edgeLedger: String(env.EDGE_LEDGER || '').toLowerCase() === 'off' ? 'off' : 'on', ms: Date.now() - t0 });
       }
+      if (url.pathname === '/api/migration') return json(migrationStatus(env));   // TEMPORARY: the status badge's list
       if (url.pathname.startsWith('/api/')) return json({ success: false, message: 'Not found.' }, 404);
       if (url.pathname === '/robots.txt') return new Response('User-agent: *\nDisallow: /\n', { headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'public, max-age=86400' } });
       if (url.pathname === '/favicon.ico') return new Response(null, { status: 204, headers: { 'Cache-Control': 'public, max-age=86400' } });
       if (url.pathname === '/rpc') {
         if (!hasApp(env)) return json({ ok: false, e: 'The app address is not set up on this server yet (APP_EXEC_URL).' }, 503);
-        return await appRpc(request, env, ctx, (fn, p) => rpc(env, fn, p));
+        return await appRpc(request, env, ctx, (fn, p, raw) => rpc(env, fn, p, raw));
       }
       if (url.pathname === '/' && (request.method === 'GET' || request.method === 'HEAD')) {
         return hasApp(env) ? await shell(request, env, ctx) : notSetUp();
