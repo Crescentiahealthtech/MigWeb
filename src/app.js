@@ -52,6 +52,7 @@ import { registerQuery, allPatients, masterDirectory, demographicsQuery, demogra
          patientKey } from './patients.js';
 import { Unsure, myPermissions, touchSession, pickerQuery, doctorPicker, profileQuery, userProfile,
          slotsDay, slotsQuery, doctorSlots, scheduleQuery, doctorSchedule } from './signin.js';
+import { RUNNER, viaRunner } from './runner.js';
 
 const SHELL_EDGE_SECONDS = 20;
 const IDENTITY_MEMO_MS = 15 * 1000;            // a session looked up in Supabase, remembered by this instance
@@ -69,7 +70,9 @@ const APPT = ['Appointments', 'Patients'];
 export const FLUSH_AFTER = {
   updateAppointmentStatus: APPT, setAppointmentTime: APPT, barcodeUpdateAppointment: APPT, submitNewAppointment: APPT,
   bookAppointmentScoped: APPT, portalBookAppointment: APPT, portalCancelAppointment: APPT,
-  saveOPEncounterScoped: ['Appointments', 'Patients', 'OP_Encounters'],
+  // Every row the save edits in place is marked (OP_Database_Engine.gs), so
+  // only those and the new rows are copied: the doctor waits for this.
+  saveOPEncounterScoped: { sheets: ['Appointments', 'OP_Encounters', 'Clinical_Templates'], window: 0 },
   createOPReferral: APPT, respondToOPReferral: ['Appointments', 'OP_Encounters'],
   registerPatient: ['Patients'], updatePatientProfile: ['Patients'], saveUserProfile: ['Patients'],
   savePatientAllergies: ['Patients'],
@@ -80,7 +83,26 @@ export const FLUSH_AFTER = {
   deleteScheduleException: ['Doctor_Schedule_Exceptions'], setDoctorDayBlocks: ['Doctor_Schedule_Exceptions'],
   // Accounts: a changed Users row ends the stored sessions it was stored with.
   crescSaveUserAccess: ['Users'], crescSetAccountActive: ['Users'], crescAdminResetPassword: ['Users'],
-  crescChangePassword: ['Users'], crescCreateStaffAccount: ['Users', 'Doctors']
+  crescChangePassword: ['Users'], crescCreateStaffAccount: ['Users', 'Doctors'],
+  // Finance Hub (its screens are answered from the copy: src/runner.js).
+  recordLedgerEntry: ['Finance_Master_Ledger'], recordBankTransfer: ['Finance_Master_Ledger'],
+  moveShiftCashOut: ['Finance_Master_Ledger', 'Shift_Registers'], openShift: ['Shift_Registers', 'Finance_Master_Ledger'],
+  closeShift: ['Shift_Registers', 'Finance_Master_Ledger'],
+  recordPayable: ['Accounts_Payable', 'Finance_Master_Ledger'], payPayable: ['Accounts_Payable', 'Finance_Master_Ledger'],
+  createManualClaim: ['Insurance_Claims_Ledger'], updateClaim: ['Insurance_Claims_Ledger'],
+  settleClaim: ['Insurance_Claims_Ledger', 'IP_Settlements', 'Finance_Master_Ledger'],
+  addIpCharge: ['IP_Charges'], collectIpAdvance: ['IP_Advances', 'Finance_Master_Ledger'],
+  addIpVisit: ['IP_Visits'], saveDischargeDraft: ['IP_Discharge_Drafts'],
+  // A bill settled weeks after it was raised is edited in place: its sheet's
+  // watched columns are read too (Supabase_Mirror.gs, SB_CFG.WATCH).
+  settleReceivableBill: { sheets: ['Pharmacy_Invoices', 'LAB_BILLING', 'Hospital_Invoices', 'LAB_SETTLEMENTS', 'Finance_Master_Ledger'], watch: true },
+  settleDischarge: ['IP_Charges', 'IP_Advances', 'IP_Settlements', 'Finance_Master_Ledger', 'Hospital_Invoices', 'IP_Admissions',
+                    'IP_Discharge_Drafts', 'Insurance_Claims_Ledger'],
+  // IP Notes.
+  saveIPNote: ['IP_Timeline_DB', 'IP_Pharmacy_Queue'], addIPCrossConsult: ['IP_Care_Team'], removeIPCrossConsult: ['IP_Care_Team'],
+  updateIPDiagnosis: ['IP_Admissions', 'IP_CaseSheets_DB'],
+  // OP consultation: templates and bundles.
+  saveConsultTemplate: ['OP_Consult_Templates'], saveRxBundle: ['Rx_Bundles'], noteRxBundleUsed: ['Rx_Bundles']
 };
 
 export const execUrl = (env) => String((env && (env.APP_EXEC_URL || env.APP_EXEC_URL_DEFAULT)) || '').trim();
@@ -125,6 +147,15 @@ export async function rpc(request, env, ctx, supabase) {
     }
   } else if (EDGE[fn]) {
     why = 'switched off (EDGE_OFF)';
+  } else if (RUNNER.has(fn)) {
+    if (edgeOn(env, fn) && edgeOn(env, 'runner')) {
+      const r = await viaRunner(env, bytes);
+      if (r instanceof Response) {
+        return new Response(r.body, { status: 200, headers: secure({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
+          'X-CresRx-Source': 'supabase', 'X-CresRx-Via': 'app code on Supabase', 'X-CresRx-Runs': r.headers.get('X-CresRx-Runs') || '' }) });
+      }
+      why = r.why;
+    } else why = 'switched off (EDGE_OFF)';
   }
   if (fn === 'crescLogSignOut') await forget(bytes);
   return forward(env, FLUSH_AFTER[fn] ? withFlush(bytes, FLUSH_AFTER[fn]) : bytes, why);
@@ -140,12 +171,18 @@ export function fnOf(bytes) {
   return m ? m[1] : '';
 }
 
-/** The same body with "flush": [...] added before its closing brace, without parsing it. */
-export function withFlush(bytes, sheets) {
+/**
+ * The same body with "flush": [...] added before its closing brace, without
+ * parsing it. `spec` is the sheets, or {sheets, window, watch}
+ * (Supabase_Mirror.gs sbFlush_).
+ */
+export function withFlush(bytes, spec) {
   let end = bytes.length - 1;
   while (end >= 0 && bytes[end] !== 0x7d) end--;                 // the last '}'
   if (end < 0) return bytes;
-  const tail = new TextEncoder().encode(',"flush":' + JSON.stringify(sheets) + '}');
+  const sheets = Array.isArray(spec) ? spec : spec.sheets;
+  const opts = Array.isArray(spec) ? null : { window: spec.window, watch: spec.watch === true };
+  const tail = new TextEncoder().encode(',"flush":' + JSON.stringify(sheets) + (opts ? ',"flushOpts":' + JSON.stringify(opts) : '') + '}');
   const out = new Uint8Array(end + tail.length);
   out.set(bytes.subarray(0, end), 0);
   out.set(tail, end);
@@ -581,7 +618,11 @@ export const MIGRATION_SCREENS = [
   { label: 'EMR · patient directory', fns: ['getMasterPatientDirectory'], day: 'Day 1' },
   { label: 'EMR · clinical timeline (outpatients; admitted patients still Apps Script)', fns: ['buildLongitudinalTimeline'], day: 'Day 1' },
   { label: 'Command Center (every load, Refresh included)', fns: ['getDashboardData'], day: 'Day 2' },
-  { label: 'Finance Hub and Master Ledger', fns: ['getAccountsDashboard'], day: 'Day 3' },
+  { label: 'Finance Hub: Master Ledger, dashboard, receivables, drawers, payables, expenses, GST, audit, insurance, IP charges and discharge (the app\'s own code on Supabase)',
+    fns: ['getAccountsDashboard', 'getFinanceDashboard', 'getReceivables', 'getAllDrawerStates', 'getShiftState', 'getPayables',
+          'getExpenseRegister', 'getTaxSummary', 'getAuditLog', 'getInsuranceClaims', 'getOpenAdmissions', 'getRunningTab'], day: 'Day 3' },
+  { label: 'IP Notes: patient list, opening a patient, timeline, care team, investigations', fns: ['getActiveIPAdmissionsForNotes', 'getIPNotesBundle', 'getIPTimeline', 'getIPLabResults'], day: 'Day 3' },
+  { label: 'OP consultation: composer, last visit, allergies, templates, drug and test lists, safety check', fns: ['getComposerContext', 'getLastVisitRecall', 'getPatientAllergies', 'fetchOPDrugMaster', 'checkRxSafety'], day: 'Day 3' },
   { label: 'Billing ledger and Hospital Billing lists', fns: ['hb_getInvoices'], day: 'Day 4' },
   { label: 'Pharmacy stock, sales and GST reports', fns: [], day: 'Day 5' },
   { label: 'Lab queues, IP ward roster and running bill, admitted patients\' timelines', fns: [], day: 'Day 6' },
@@ -589,8 +630,8 @@ export const MIGRATION_SCREENS = [
   { label: 'All writes (registrations, bookings, bills, consultations) — stay on Apps Script until the server stage', fns: [], day: 'later' }
 ];
 export function migrationStatus(env) {
-  return { screens: MIGRATION_SCREENS.map((g) => ({ label: g.label, day: g.day,
-    done: g.fns.length > 0 && g.fns.every((f) => EDGE[f] && edgeOn(env, f)) })) };
+  const on = (f) => (EDGE[f] && edgeOn(env, f)) || (RUNNER.has(f) && edgeOn(env, f) && edgeOn(env, 'runner'));
+  return { screens: MIGRATION_SCREENS.map((g) => ({ label: g.label, day: g.day, done: g.fns.length > 0 && g.fns.every(on) })) };
 }
 
 export function notSetUp() {
