@@ -47,7 +47,7 @@ function istParts(ms) {
   const d = new Date(ms + IST_MS);
   return { y: d.getUTCFullYear(), mo: d.getUTCMonth() + 1, d: d.getUTCDate(), h: d.getUTCHours(), mi: d.getUTCMinutes() };
 }
-const istDay = (ms) => { const t = istParts(ms); return t.y + '-' + p2(t.mo) + '-' + p2(t.d); };
+export const istDay = (ms) => { const t = istParts(ms); return t.y + '-' + p2(t.mo) + '-' + p2(t.d); };
 const istClock = (ms) => { const t = istParts(ms); return p2(t.h) + ':' + p2(t.mi); };
 
 /** cresc_sheetTextOf_ (Shared_Dates.gs), one cell. */
@@ -85,12 +85,12 @@ export function shape(r) {
 // Doctor_Core.gs, Doctors_Engine.gs, CodeMV.gs
 // --------------------------------------------------------------------------
 
-const dcStr = (v) => (v === null || v === undefined) ? '' : String(v).trim();
-const dcUpper = (v) => dcStr(v).toUpperCase();
+export const dcStr = (v) => (v === null || v === undefined) ? '' : String(v).trim();
+export const dcUpper = (v) => dcStr(v).toUpperCase();
 const dcMoney = (v) => { const n = parseFloat(v); return isNaN(n) ? 0.0 : n; };
 
 /** dc_to24_ */
-function dcTo24(t) {
+export function dcTo24(t) {
   if (!t && t !== 0) return '';
   if (isDate(t)) return istClock(t.date);
   const s = dcUpper(t).replace(/\./g, '').replace(/([0-9])(AM|PM)/, '$1 $2');
@@ -103,7 +103,7 @@ function dcTo24(t) {
   return (h < 10 ? '0' : '') + h + ':' + mi;
 }
 /** dc_to12_ */
-function dcTo12(t24) {
+export function dcTo12(t24) {
   const s = dcTo24(t24);
   if (!s) return (t24 && !isDate(t24) && String(t24).trim()) ? DC_NO_SLOT : '';
   const parts = s.split(':');
@@ -113,7 +113,7 @@ function dcTo12(t24) {
   return (h12 < 10 ? '0' : '') + h12 + ':' + mi + ' ' + ap;
 }
 /** dc_minutes_ */
-function dcMinutes(t24) {
+export function dcMinutes(t24) {
   const s = dcTo24(t24);
   if (!s) return -1;
   const p = s.split(':');
@@ -212,7 +212,7 @@ export function resolveScope(staff, doctors, requestedDoctorId) {
 }
 
 /** dc_inScope_ */
-function inScope(scope, doctorId) {
+export function inScope(scope, doctorId) {
   if (!scope || !scope.ok) return false;
   if (scope.mode === 'ALL') return true;
   if (!doctorId) return false;

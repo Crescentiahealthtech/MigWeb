@@ -19,7 +19,10 @@ const SESS = {
 };
 
 function network({ age = 5000, stored = true, claim = true } = {}) {
-  const log = { apps: [], claims: 0, keys: [] };
+  // A copy made `age` ms ago, but never before today's midnight in the clinic (a test at 00:01 IST stays "today").
+  const sinceMidnight = (Date.now() + 330 * 60000) % 86400000;
+  if (age < 86400000) age = Math.min(age, Math.max(0, sinceMidnight - 1000));
+  const log = { apps: [], claims: [], keys: [] };
   const waits = [];
   globalThis.caches = { default: { match: async () => undefined, put: async () => {} } };
   globalThis.fetch = async (url, init = {}) => {
@@ -40,7 +43,8 @@ function network({ age = 5000, stored = true, claim = true } = {}) {
       return new Response(stored ? '{"data": ' + JSON.stringify(DATA).replace(/":/g, '": ') + ', "made": ' + (Date.now() - age) + '}' : 'null',
                           { headers: { 'content-type': 'application/json' } });
     }
-    if (url.endsWith('/rpc/snapshot_claim')) { log.claims++; return Response.json(claim); }
+    if (url.endsWith('/rpc/snapshot_claim')) { log.claims.push(body.p.ms); return Response.json(claim); }
+    if (url.endsWith('/rpc/session_get')) return new Response('null', { headers: { 'content-type': 'application/json' } });
     throw new Error('unexpected fetch ' + url);
   };
   const ctx = { waitUntil: (p) => waits.push(p) };
@@ -58,9 +62,9 @@ test('the stored answer is passed on as it is, for the right group, with its age
   const { source, age, v } = await call(['admin', false, 'FIN'], ctx);
   assert.equal(source, 'supabase');
   assert.equal(age, '12');
-  assert.deepEqual(v, { success: true, data: DATA, message: 'snapshot' });
+  assert.deepEqual(v, { success: true, data: DATA, message: 'snapshot', age: 12 });
   assert.deepEqual(log.keys, ['dash:FIN']);
-  assert.equal(log.claims, 0);                                        // fresh enough: no refresh asked
+  assert.equal(log.claims.length, 0);                                 // fresh enough: no refresh asked
   await call(['admin', false, 'CLIN'], ctx);
   assert.deepEqual(log.keys, ['dash:FIN', 'dash:CLIN']);              // no money: the clinical answer
 });
@@ -79,20 +83,38 @@ test('an answer over a minute old is served, and one refresh is asked of Apps Sc
   const { source } = await call(['admin', false, 'FIN'], ctx);
   await settle();
   assert.equal(source, 'supabase');
-  assert.equal(log.claims, 1);
+  assert.deepEqual(log.claims, [60000]);
   assert.deepEqual(log.apps.filter((b) => b.fn === 'getDashboardData').map((b) => b.args), [['admin', true, 'FIN']]);
   ({ log, ctx, settle } = network({ age: 90000, claim: false }));     // someone else already asked
   await call(['admin', false, 'FIN'], ctx); await settle();
   assert.equal(log.apps.filter((b) => b.fn === 'getDashboardData').length, 0);
 });
 
-test('Apps Script answers the Refresh button, a missing or old answer, and anyone without dashboard.read', async () => {
-  let { ctx } = network();
-  assert.equal((await call(['admin', true, 'FIN'], ctx)).source, 'apps-script');
-  ({ ctx } = network({ stored: false }));
-  assert.equal((await call(['admin', false, 'FIN'], ctx)).source, 'apps-script');
-  ({ ctx } = network({ age: 11 * 60000 }));
-  assert.equal((await call(['admin', false, 'FIN'], ctx)).source, 'apps-script');
+test('opening the screen and Refresh are answered from the copy too, and ask for a new one once it is 15 s old', async () => {
+  let { log, ctx, settle } = network({ age: 20000 });
+  const r = await call(['admin', true, 'FIN'], ctx);
+  await settle();
+  assert.equal(r.source, 'supabase');
+  assert.equal(r.v.age, 20);                                          // the screen looks again when it is over 20 s
+  assert.deepEqual(log.claims, [15000]);
+  assert.deepEqual(log.apps.filter((b) => b.fn === 'getDashboardData').map((b) => b.args), [['admin', true, 'FIN']]);
+  ({ log, ctx, settle } = network({ age: 2 * 3600000 }));             // hours old, still today: served, refreshed
+  assert.equal((await call(['admin', true, 'FIN'], ctx)).source, 'supabase');
+  await settle();
+  assert.equal(log.claims.length, 1);
+});
+
+test('Apps Script answers when there is no copy, the copy is from an earlier day, or without dashboard.read', async () => {
+  let { ctx, log, settle } = network({ stored: false });
+  let r = await call(['admin', true, 'FIN'], ctx);
+  assert.equal(r.source, 'apps-script');
+  ({ ctx, log, settle } = network({ age: 2 * 86400000 }));
+  const res = await worker.fetch(new Request('https://migweb.example/rpc', { method: 'POST',
+    body: JSON.stringify({ fn: 'getDashboardData', args: ['admin', false, 'FIN'] }) }), env(), ctx);
+  assert.equal(res.headers.get('x-cresrx-source'), 'apps-script');
+  assert.equal(res.headers.get('x-cresrx-why'), 'the stored copy is from an earlier day');
+  await settle();
+  assert.equal(log.claims.length, 0);                                 // and no refresh asked on top
   ({ ctx } = network());
   assert.equal((await call(['admin', false, 'NONE'], ctx)).source, 'apps-script');
   assert.equal((await call(['admin', false, 'FIN'], ctx, env({ EDGE_OFF: 'getDashboardData' }))).source, 'apps-script');

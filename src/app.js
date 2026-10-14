@@ -14,37 +14,48 @@
 //   GET  /?privacy, ?rights, ?doc=…, ?verifyDS=…, ?viewReport=…
 //                the patient pages, Google's page in a frame as before.
 //
-// One difference. The Daily Ledger's call, fetchDailyLedgerScoped, is
-// answered here from the Supabase copy of the workbook — no Apps Script —
-// when it can be (edgeLedger below); anything else, and any doubt, goes to
-// Apps Script exactly as before:
+// The difference: the reads people wait on are answered here, from the
+// Supabase copy of the workbook, without Apps Script (the EDGE table below):
+// the Daily Ledger, the patient register and records, the Command Center,
+// and the calls every screen makes at sign-in (permissions, the doctor
+// picker, screen bundles, the build check, the consent notice). Anything
+// else, and any doubt, goes to Apps Script exactly as before:
 //
-//   * who is asking: the app's own session token, checked by Apps Script
-//     (getEdgeIdentity) and remembered here for IDENTITY_SECONDS;
-//   * whether the copy may be used: Apps Script says so with the identity
-//     (reads on and the every-minute sync running; RUN_SB_04b_readsOff
-//     switches this off too);
-//   * the answer: src/ledger.js, the Apps Script function line for line,
-//     compared with it on the demo year by the MIGRATION repo's
+//   * who is asking: the app's own session token, looked up in Supabase
+//     (mirror.sessions), where Apps Script records each session when it signs
+//     someone in and whenever it checks one, and removes it at sign-out. A
+//     session not there is asked of Apps Script (getEdgeIdentity), which
+//     records it. Switching an account off, or editing it, takes effect at
+//     once (its Users row no longer matches the one the session was stored
+//     with);
+//   * whether the copy may be used: only while Apps Script's every-minute
+//     sync keeps leaving its heartbeat (RUN_SB_04b_readsOff stops it);
+//   * the answers: ports of the Apps Script functions, line for line,
+//     compared with them on the demo year by the MIGRATION repo's
 //     tools/sbmirror.js;
-//   * fresh after a change: a call that books, moves, re-states or deletes
-//     an appointment, or registers or edits a patient, goes to Apps Script
-//     with "flush" (Web_Proxy.gs), which copies those sheets to Supabase
-//     before answering, so the ledger the screen reloads shows it. Changes
-//     made in the sheet by hand reach it with the next sync (a minute).
+//   * fresh after a change: a call that writes goes to Apps Script with
+//     "flush" (Web_Proxy.gs), which copies the sheets it changed to Supabase
+//     before answering, so the screen's reload shows it. Changes made in the
+//     sheet by hand reach the copy with the next sync (a minute).
+//
+// When the Worker leaves a call it could answer to Apps Script, the answer
+// says why (X-CresRx-Why; the migration badge shows it).
 //
 // Settings: APP_EXEC_URL (the deployment's …/exec address; the same one the
-// clinic's address uses), SUPABASE_URL, SUPABASE_SECRET_KEY. EDGE_LEDGER =
-// "off" sends the ledger to Apps Script too.
+// clinic's address uses), SUPABASE_URL, SUPABASE_SECRET_KEY. EDGE_OFF names
+// calls to leave to Apps Script ("all" for every one).
 // ============================================================================
 
-import { sessionLedgerQueries, buildLedger, doctorsFrom, resolveScope, dayKey } from './ledger.js';
+import { sessionLedgerQueries, buildLedger, doctorsFrom, resolveScope, dayKey, istDay } from './ledger.js';
 import { splitSnapshot, redact, hiddenFor } from './snapshots.js';
 import { registerQuery, allPatients, masterDirectory, demographicsQuery, demographics, timelineQuery, timeline,
          patientKey } from './patients.js';
+import { Unsure, myPermissions, touchSession, pickerQuery, doctorPicker, profileQuery, userProfile,
+         slotsDay, slotsQuery, doctorSlots, scheduleQuery, doctorSchedule } from './signin.js';
 
 const SHELL_EDGE_SECONDS = 20;
-const IDENTITY_SECONDS = 120;
+const IDENTITY_MEMO_MS = 15 * 1000;            // a session looked up in Supabase, remembered by this instance
+const IDENTITY_REFRESH_MS = 10 * 60 * 1000;    // stored longer ago than this: Apps Script re-checks it, in the background
 const MAX_RPC_BYTES = 20 * 1024 * 1024;
 const PASS_THROUGH = /^(privacy|rights|doc|k|verifyDS|viewReport)$/;
 const EXEC_RE = /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/;
@@ -63,7 +74,13 @@ export const FLUSH_AFTER = {
   registerPatient: ['Patients'], updatePatientProfile: ['Patients'], saveUserProfile: ['Patients'],
   savePatientAllergies: ['Patients'],
   saveNewAdmissionLedger: ['IP_Admissions', 'Patients'], processBedTransfer: ['IP_Admissions'],
-  processPatientDischarge: ['IP_Admissions']
+  processPatientDischarge: ['IP_Admissions'],
+  // Doctors' hours and leave: the booking slots are read from the copy.
+  saveDoctorSchedule: ['Doctor_Schedules'], addScheduleException: ['Doctor_Schedule_Exceptions'],
+  deleteScheduleException: ['Doctor_Schedule_Exceptions'], setDoctorDayBlocks: ['Doctor_Schedule_Exceptions'],
+  // Accounts: a changed Users row ends the stored sessions it was stored with.
+  crescSaveUserAccess: ['Users'], crescSetAccountActive: ['Users'], crescAdminResetPassword: ['Users'],
+  crescChangePassword: ['Users'], crescCreateStaffAccount: ['Users', 'Doctors']
 };
 
 export const execUrl = (env) => String((env && (env.APP_EXEC_URL || env.APP_EXEC_URL_DEFAULT)) || '').trim();
@@ -91,19 +108,30 @@ export async function rpc(request, env, ctx, supabase) {
   if (bytes.length > MAX_RPC_BYTES) return json({ ok: false, e: 'That request is too large.' }, 413);
   const fn = fnOf(bytes);
 
+  let why = '';
   if (EDGE[fn] && edgeOn(env, fn)) {
     try {
       const call = JSON.parse(new TextDecoder().decode(bytes));   // small: a name and a few ids
       const args = Array.isArray(call && call.args) ? call.args : [];
-      const v = await EDGE[fn](args, env, ctx, supabase);
+      const v = await EDGE[fn](args, env, ctx, supabase, request);
       if (v instanceof Response) return v;
+      if (v === NULL) return json({ ok: true, v: null }, 200, { 'X-CresRx-Source': 'supabase' });
       if (v) return json({ ok: true, v }, 200, { 'X-CresRx-Source': 'supabase' });
+      why = 'not answered here';
     } catch (e) {
-      console.error('edge ' + fn + ' fell back to Apps Script:', e && e.message);
+      // The reason goes to the browser: never an error's own text (it can quote data).
+      why = e instanceof Unsure ? e.message : 'an error here (see the Worker\'s log)';
+      if (!(e instanceof Unsure)) console.error('edge ' + fn + ' fell back to Apps Script:', e && e.message);
     }
+  } else if (EDGE[fn]) {
+    why = 'switched off (EDGE_OFF)';
   }
-  return forward(env, FLUSH_AFTER[fn] ? withFlush(bytes, FLUSH_AFTER[fn]) : bytes);
+  if (fn === 'crescLogSignOut') await forget(bytes);
+  return forward(env, FLUSH_AFTER[fn] ? withFlush(bytes, FLUSH_AFTER[fn]) : bytes, why);
 }
+
+/** The answer "null" from the Worker itself (an EDGE handler's null means "ask Apps Script"). */
+const NULL = Object.freeze({ null: true });
 
 /** The function's name from the start of the body, or ''. */
 export function fnOf(bytes) {
@@ -125,7 +153,8 @@ export function withFlush(bytes, sheets) {
 }
 
 /** The call to the deployment's doPost, its answer back unchanged and unread. */
-async function forward(env, body) {
+async function forward(env, body, why) {
+  const extra = why ? { 'X-CresRx-Why': String(why).replace(/[^\x20-\x7e]/g, '').slice(0, 160) } : {};
   let res;
   try {
     // Apps Script answers a POST with a redirect to the result; fetch
@@ -137,12 +166,12 @@ async function forward(env, body) {
   // doPost answers JSON (ContentService); anything else is Google's own
   // page (a sign-in, an error) and is read only to say which.
   if (/json/i.test(res.headers.get('Content-Type') || '')) {
-    return new Response(res.body, { status: 200, headers: secure({ 'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-store', 'X-CresRx-Source': 'apps-script' }) });
+    return new Response(res.body, { status: 200, headers: secure(Object.assign({ 'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store', 'X-CresRx-Source': 'apps-script' }, extra)) });
   }
   const out = await res.text();
   if (/^\s*\{/.test(out)) {
-    return new Response(out, { status: 200, headers: secure({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-CresRx-Source': 'apps-script' }) });
+    return new Response(out, { status: 200, headers: secure(Object.assign({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-CresRx-Source': 'apps-script' }, extra)) });
   }
   return json({ ok: false, e: /accounts\.google\.com|ServiceLogin|signin/i.test(out)
     ? 'The app server asks for a Google sign-in: set the deployment\'s access to "Anyone" and deploy again.'
@@ -159,53 +188,107 @@ async function appsScript(env, fn, args) {
   return o && o.ok ? o.v : null;
 }
 
+/**
+ * One server call to Apps Script whose answer is not wanted here: a refresh
+ * that leaves its result in Supabase. Its reply is not read (a screen bundle
+ * is hundreds of kilobytes: parsing it would spend the CPU allowance).
+ */
+async function appsScriptQuietly(env, fn, args) {
+  const res = await fetch(execUrl(env), { method: 'POST', body: JSON.stringify({ fn, args }),
+                                          headers: { 'Content-Type': 'application/json' }, redirect: 'follow' });
+  try { if (res.body) await res.body.cancel(); } catch (e) { /* nothing to read */ }
+}
+
+/** Runs after the answer has gone, for as long as Cloudflare allows. */
+function later(ctx, what, promise) {
+  const p = promise.catch((e) => console.error(what + ':', e && e.message));
+  if (ctx && ctx.waitUntil) ctx.waitUntil(p);
+}
+
 // ---------------------------------------------------------------------------
 // Who is asking
 // ---------------------------------------------------------------------------
 
-const MEMO = new Map();        // this isolate's copy; the edge cache is shared within a data centre
+// Plain values only: one request may not wait on another's I/O in Workers.
+const MEMO = new Map();         // hash -> {id, until}: this instance's copy, for IDENTITY_MEMO_MS
+const REFRESHED = new Map();    // hash -> when this instance last asked Apps Script to re-check it
 
 async function sha256(s) {
   const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
+const tokenHash = (token) => sha256('cresrx-session:' + token);
+
+/** getEdgeIdentity's answer, as the Worker keeps it. */
+function normal(v) {
+  return { username: String(v.username || ''), role: String(v.role || '').toLowerCase(), doctorId: String(v.doctorId || ''),
+           dutyMoIds: Array.isArray(v.dutyMoIds) ? v.dutyMoIds.map(String) : [], edge: v.edge === true,
+           permissions: Array.isArray(v.permissions) ? v.permissions.map(String) : [],
+           actor: v.actor && typeof v.actor === 'object' ? v.actor : null,
+           uiHidden: v.uiHidden && typeof v.uiHidden === 'object' ? v.uiHidden : {},
+           // Added with the sessions kept in Supabase; an older Apps Script
+           // leaves them out, and the screens that need them go to it.
+           uiHiddenAll: Array.isArray(v.uiHiddenAll) ? v.uiHiddenAll.map(String) : undefined,
+           displayName: v.displayName === undefined ? undefined : String(v.displayName || ''),
+           tenants: Array.isArray(v.tenants) ? v.tenants.map(String) : undefined,
+           monthFirst: v.monthFirst === true,
+           ...('visiting' in v ? { visiting: v.visiting && typeof v.visiting === 'object' ? v.visiting : null } : {}) };
+}
 
 /**
- * The session's {username, role, doctorId, dutyMoIds, edge}, or null. Asked
- * of Apps Script (getEdgeIdentity) at most once per IDENTITY_SECONDS per
- * session; only a live session is remembered, under a hash of its token.
+ * The session's identity, or null. From Supabase (mirror.sessions, stored by
+ * Apps Script under a hash of the token) when it is there; when it was stored
+ * more than IDENTITY_REFRESH_MS ago, Apps Script re-checks it in the
+ * background, which keeps both sides' "last seen" moving. Not there (signed
+ * in before this version, or the account changed since): Apps Script is
+ * asked (getEdgeIdentity), and stores it for next time.
  */
-export async function identity(token, env, ctx) {
+export async function identity(token, env, ctx, supabase) {
   token = String(token || '');
-  if (!token) return null;
-  const h = await sha256('cresrx-session:' + token);
+  if (!token || token.length > 200) return null;
+  const h = await tokenHash(token);
   const now = Date.now();
   const m = MEMO.get(h);
   if (m && m.until > now) return m.id;
-  const key = new Request('https://identity.cresrx.internal/' + h);
-  const cache = typeof caches !== 'undefined' ? caches.default : null;
-  if (cache) {
-    const hit = await cache.match(key);
-    if (hit) {
-      const id = await hit.json();
-      MEMO.set(h, { id, until: now + 15000 });
-      return id;
-    }
+  let id = null;
+  if (supabase) {
+    try {
+      const row = await supabase('session_get', { hash: h });
+      if (row && row.identity && typeof row.identity === 'object') {
+        id = normal(row.identity);
+        if (Number(row.age) > IDENTITY_REFRESH_MS && !((REFRESHED.get(h) || 0) > now - 60000)) {
+          REFRESHED.set(h, now);
+          later(ctx, 'session refresh', appsScriptQuietly(env, 'getEdgeIdentity', [token]));
+        }
+      }
+    } catch (e) { console.error('session_get:', e && e.message); }
   }
-  const v = await appsScript(env, 'getEdgeIdentity', [token]);
-  if (!v || !v.success) return null;
-  const id = { username: String(v.username || ''), role: String(v.role || '').toLowerCase(), doctorId: String(v.doctorId || ''),
-               dutyMoIds: Array.isArray(v.dutyMoIds) ? v.dutyMoIds.map(String) : [], edge: v.edge === true,
-               permissions: Array.isArray(v.permissions) ? v.permissions.map(String) : [],
-               actor: v.actor && typeof v.actor === 'object' ? v.actor : null,
-               uiHidden: v.uiHidden && typeof v.uiHidden === 'object' ? v.uiHidden : {} };
+  if (!id) {
+    const v = await appsScript(env, 'getEdgeIdentity', [token]);
+    if (!v || !v.success) return null;
+    id = normal(v);
+  }
   if (MEMO.size > 500) MEMO.clear();
-  MEMO.set(h, { id, until: now + IDENTITY_SECONDS * 1000 });
-  if (cache) {
-    const put = cache.put(key, new Response(JSON.stringify(id), { headers: { 'Cache-Control': 'max-age=' + IDENTITY_SECONDS } }));
-    if (ctx && ctx.waitUntil) ctx.waitUntil(put); else await put;
-  }
+  if (REFRESHED.size > 500) REFRESHED.clear();
+  MEMO.set(h, { id, until: Date.now() + IDENTITY_MEMO_MS });
   return id;
+}
+
+/** The caller of a call the Worker answers, or Unsure (Apps Script answers). */
+async function caller(token, env, ctx, supabase) {
+  const who = await identity(token, env, ctx, supabase);
+  if (!who) throw new Unsure('session not known here');
+  if (!who.edge) throw new Unsure('Supabase reads are off');
+  return who;
+}
+
+/** Sign-out: this instance forgets the session at once (Apps Script removes it from Supabase). */
+async function forget(bytes) {
+  try {
+    const call = JSON.parse(new TextDecoder().decode(bytes));
+    const token = String((call && call.args && call.args[0]) || '');
+    if (token) MEMO.delete(await tokenHash(token));
+  } catch (e) { /* nothing remembered */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -222,8 +305,7 @@ export async function edgeLedger(args, env, ctx, supabase) {
   const [dateStr, doctorId, token] = args;
   const date = dayKey(dateStr);
   if (!date) return null;
-  const who = await identity(token, env, ctx);
-  if (!who || !who.edge) return null;
+  const who = await caller(token, env, ctx, supabase);
   const res = await supabase('mirror_query', { queries: sessionLedgerQueries(date) });
   const [doctorsRes, appointments, patients] = (res && res.results) || [];
   if (!doctorsRes || !doctorsRes.found || !appointments || !appointments.found || !patients || !patients.found) return null;
@@ -247,8 +329,8 @@ export async function edgeLedger(args, env, ctx, supabase) {
  * Script answers (and audits) instead.
  */
 async function patientRead(token, permission, env, ctx, supabase, queries, port, audit) {
-  const who = await identity(token, env, ctx);
-  if (!who || !who.edge || !who.actor || !who.permissions.includes(permission)) return null;
+  const who = await caller(token, env, ctx, supabase);
+  if (!who.actor || !who.permissions.includes(permission)) throw new Unsure('no ' + permission + ': Apps Script refuses');
   const res = await supabase('mirror_query', { queries });
   const v = port((res && res.results) || []);
   if (v === null || v === undefined) return null;
@@ -259,47 +341,95 @@ async function patientRead(token, permission, env, ctx, supabase, queries, port,
 }
 
 // ---------------------------------------------------------------------------
-// The Command Center from its ready-made answer (src/snapshots.js)
+// Ready-made answers kept in Supabase (src/snapshots.js): the Command Center,
+// screen bundles, the build check, the consent notice
 // ---------------------------------------------------------------------------
 
-const SNAPSHOT_FRESH_MS = 60 * 1000;          // older than this: ask Apps Script for a new one, in the background
-const SNAPSHOT_MAX_MS = 10 * 60 * 1000;       // older than this: Apps Script answers, as before
+const DASH_FRESH_MS = 60 * 1000;          // older than this: Apps Script computes a new one, in the background
+const DASH_FRESH_ASKED_MS = 15 * 1000;    // …or this, when the screen was opened or Refresh pressed
+const BUNDLE_FRESH_MS = 3 * 60 * 1000;    // a screen bundle is re-read from Apps Script after this
+const BUILD_FRESH_MS = 5 * 60 * 1000;
+const NOTICE_FRESH_MS = 10 * 60 * 1000;
+
+/**
+ * A stored answer, `make(dataText, age)` turning it into the reply; or null
+ * when there is none. Older than `freshMs`: served all the same, and Apps
+ * Script asked — by one caller, whoever claims it first — to store a new one
+ * (`refresh`), after the answer has gone.
+ */
+async function stored(key, freshMs, refresh, ctx, supabase, make, refuse) {
+  const snap = splitSnapshot(await supabase('snapshot_get', { key }, true));
+  if (!snap) return null;
+  const no = refuse && refuse(snap);
+  if (no) throw new Unsure(no);
+  const age = Math.max(0, Date.now() - snap.made);
+  if (age > freshMs) {
+    later(ctx, 'refresh ' + key, supabase('snapshot_claim', { key, ms: freshMs }).then((mine) => {
+      if (mine === true) return refresh();
+    }));
+  }
+  return raw(make(snap.dataText, age, snap), { 'X-CresRx-Source': 'supabase', 'X-CresRx-Age': String(Math.round(age / 1000)) });
+}
+const plain = (dataText) => '{"ok":true,"v":' + dataText + '}';
+const notYet = () => { throw new Unsure('not stored yet'); };
 
 /**
  * getDashboardData(role, bust, sessionToken) — Admin_Dashboard_Logic.gs.
- * The automatic loads come from the answer Apps Script last left in
- * Supabase; the Refresh button (bust) still asks Apps Script, which stores
- * what it computes. Same permission (dashboard.read), same split of who sees
- * money (accounts.read), same cards taken out per person (crescUiRedact_).
+ * Every load, Refresh included, is answered at once from the answer Apps
+ * Script last left in Supabase, and a new one is computed in the background
+ * when that is over a minute old (15 s when the screen was just opened or
+ * Refresh pressed). The answer says how old it is (`age`, seconds), and the
+ * screen looks again once the new one should be ready. Same permission
+ * (dashboard.read), same split of who sees money (accounts.read), same cards
+ * taken out per person (crescUiRedact_). Only a copy from an earlier day is
+ * left to Apps Script: "today" must mean today.
  */
 async function dashboard([role, bust, token], env, ctx, supabase) {
-  if (bust === true) return null;
-  const who = await identity(token, env, ctx);
-  if (!who || !who.edge || !who.permissions.includes('dashboard.read')) return null;
+  const who = await caller(token, env, ctx, supabase);
+  if (!who.permissions.includes('dashboard.read')) throw new Unsure('no dashboard.read: Apps Script refuses');
   const key = 'dash:' + (who.permissions.includes('accounts.read') ? 'FIN' : 'CLIN');
-  const snap = splitSnapshot(await supabase('snapshot_get', { key }, true));
-  if (!snap) return null;
-  const age = Date.now() - snap.made;
-  if (!(age >= 0 && age <= SNAPSHOT_MAX_MS)) return null;
-  if (age > SNAPSHOT_FRESH_MS) {
-    // One open dashboard asks for a new answer; the rest are served this one.
-    const refresh = supabase('snapshot_claim', { key, ms: SNAPSHOT_FRESH_MS }).then((mine) => {
-      if (mine === true) return appsScript(env, 'getDashboardData', [role, true, token]);
-    }).catch((e) => console.error('dashboard refresh:', e && e.message));
-    if (ctx && ctx.waitUntil) ctx.waitUntil(refresh);
-  }
-  const headers = { 'X-CresRx-Source': 'supabase', 'X-CresRx-Age': String(Math.round(age / 1000)) };
-  if (hiddenFor(who.uiHidden, 'dash.').length) {
-    const data = redact(JSON.parse(snap.dataText), who.uiHidden, 'dash.');
-    return raw(JSON.stringify({ ok: true, v: { success: true, data, message: 'snapshot' } }), headers);
-  }
-  // Nobody's cards to take out: the stored text goes on as it is.
-  return raw('{"ok":true,"v":{"success":true,"data":' + snap.dataText + ',"message":"snapshot"}}', headers);
+  const freshMs = bust === true ? DASH_FRESH_ASKED_MS : DASH_FRESH_MS;
+  const out = await stored(key, freshMs, () => appsScriptQuietly(env, 'getDashboardData', [role, true, token]), ctx, supabase,
+    (dataText, age) => {
+      const tail = ',"message":"snapshot","age":' + Math.round(age / 1000) + '}}';
+      if (hiddenFor(who.uiHidden, 'dash.').length) {
+        const data = redact(JSON.parse(dataText), who.uiHidden, 'dash.');
+        return '{"ok":true,"v":{"success":true,"data":' + JSON.stringify(data) + tail;
+      }
+      // Nobody's cards to take out: the stored text goes on as it is.
+      return '{"ok":true,"v":{"success":true,"data":' + dataText + tail;
+    },
+    (snap) => (istDay(snap.made) !== istDay(Date.now()) ? 'the stored copy is from an earlier day' : ''));
+  if (!out) throw new Unsure('no stored copy yet');
+  return out;
 }
 
 /** An answer already in the shape the page expects ({ok, v}), sent as it is. */
 function raw(text, headers) {
   return new Response(text, { status: 200, headers: secure(Object.assign({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }, headers)) });
+}
+
+/** The build of the page asking (the cookie shell() sets), or ''. */
+function pageBuild(request) {
+  const m = /(?:^|;\s*)cresrx_build=([0-9a-f]{6,32})(?:;|$)/.exec((request && request.headers.get('Cookie')) || '');
+  return m ? m[1] : '';
+}
+
+/**
+ * crescGetBundle(name) — Module_Loader.gs. A screen's markup, the same for
+ * everyone on one deployment: kept in Supabase per build of the page and per
+ * bundle, re-read from Apps Script every few minutes while in use. The first
+ * person on a new build gets it from Apps Script, which stores it.
+ */
+async function bundle([name], env, ctx, supabase, request) {
+  const build = pageBuild(request);
+  const n = String(name || '').trim();
+  if (!build) throw new Unsure('the page\'s build is not known');
+  if (!/^[a-z][a-z0-9-]{0,39}$/.test(n)) throw new Unsure('an unusual bundle name');
+  const hit = await stored('bundle:' + build + ':' + n, BUNDLE_FRESH_MS,
+    () => appsScriptQuietly(env, 'crescGetBundle', [n, build]), ctx, supabase, plain);
+  if (hit) return hit;
+  return forward(env, new TextEncoder().encode(JSON.stringify({ fn: 'crescGetBundle', args: [n, build] })), 'not stored yet');
 }
 
 /** The calls the Worker answers itself, by the name the page calls them. */
@@ -318,7 +448,50 @@ const EDGE = {
   // buildLongitudinalTimeline(patientId, sessionToken) — EMR_MasterTimeline_Logic.gs
   buildLongitudinalTimeline: ([patientId, token], env, ctx, sb) => patientRead(token, 'emr.read', env, ctx, sb,
     timelineQuery(patientKey(patientId)), (rs) => timeline(rs, patientId),
-    { what: 'Patient', id: String(patientId || ''), endpoint: 'buildLongitudinalTimeline' })
+    { what: 'Patient', id: String(patientId || ''), endpoint: 'buildLongitudinalTimeline' }),
+  // getUserProfile(patientId, sessionToken) — CodeMV.gs: any signed-in staff; a patient only themselves
+  getUserProfile: async ([patientId, token], env, ctx, sb) => {
+    const who = await caller(token, env, ctx, sb);
+    const want = patientKey(patientId);
+    if (!want) return NULL;
+    const res = await sb('mirror_query', { queries: profileQuery(want) });
+    const v = userProfile(who, want, (res && res.results) || []);
+    return v === null ? NULL : v;
+  },
+
+  // Signing in, and what every screen asks first.
+  // crescGetMyPermissions(token) — RBAC.gs
+  crescGetMyPermissions: async ([token], env, ctx, sb) => myPermissions(await caller(token, env, ctx, sb)),
+  // crescTouchSession(token) — Doctor_Session_Store.gs ("stay signed in")
+  crescTouchSession: async ([token], env, ctx, sb) => touchSession(await caller(token, env, ctx, sb)),
+  // getDoctorPickerContext(token) — Doctor_Core.gs
+  getDoctorPickerContext: async ([token], env, ctx, sb) => {
+    const who = await caller(token, env, ctx, sb);
+    const res = await sb('mirror_query', { queries: pickerQuery() });
+    return doctorPicker(who, (res && res.results) || []);
+  },
+  // crescGetBundle(name) — Module_Loader.gs
+  crescGetBundle: bundle,
+  // getAppBuild() — App_Version.gs (no session: the build every visitor is sent)
+  getAppBuild: async (args, env, ctx, sb) => (await stored('build', BUILD_FRESH_MS,
+    () => appsScriptQuietly(env, 'getAppBuild', []), ctx, sb, plain)) || notYet(),
+  // getDPDPNotice() — DPDP_Compliance.gs (no session: the notice every patient is shown)
+  getDPDPNotice: async (args, env, ctx, sb) => (await stored('dpdp:notice', NOTICE_FRESH_MS,
+    () => appsScriptQuietly(env, 'getDPDPNotice', []), ctx, sb, plain)) || notYet(),
+
+  // Booking: a doctor's slots for a day, and weekly hours — Doctor_Schedule_Engine.gs
+  getDoctorSlotsForDate: async ([doctorId, dateStr, token], env, ctx, sb) => {
+    const who = await caller(token, env, ctx, sb);
+    const day = slotsDay(dateStr);
+    if (!day) throw new Unsure('no date');
+    const res = await sb('mirror_query', { queries: slotsQuery(day) });
+    return doctorSlots(who, doctorId, day, (res && res.results) || []);
+  },
+  getDoctorSchedule: async ([doctorId, token], env, ctx, sb) => {
+    const who = await caller(token, env, ctx, sb);
+    const res = await sb('mirror_query', { queries: scheduleQuery() });
+    return doctorSchedule(who, doctorId, (res && res.results) || []);
+  }
 };
 
 /**
@@ -386,7 +559,12 @@ export async function shell(request, env, ctx) {
     const at = /<head[^>]*>/i.test(html) ? /<head[^>]*>/i : /<html[^>]*>/i;
     html = at.test(html) ? html.replace(at, (h) => h + tag) : tag + html;
   }
-  return text(html, 200, 'text/html; charset=utf-8', 'no-store, no-cache, must-revalidate, max-age=0');
+  const res = text(html, 200, 'text/html; charset=utf-8', 'no-store, no-cache, must-revalidate, max-age=0');
+  // The build of this page (Apps Script stamps it in), so the screen bundles
+  // it asks for next are the ones of the same build (crescGetBundle above).
+  const b = /window\.CRESC_BUILD\s*=\s*'([0-9a-f]{6,32})'/.exec(html);
+  if (b) res.headers.append('Set-Cookie', 'cresrx_build=' + b[1] + '; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=86400');
+  return res;
 }
 
 /**
@@ -394,17 +572,21 @@ export async function shell(request, env, ctx) {
  * (GET /api/migration). TEMPORARY, like the badge.
  */
 export const MIGRATION_SCREENS = [
+  { label: 'Sign-in: permissions, "stay signed in", the doctor picker', fns: ['crescGetMyPermissions', 'crescTouchSession', 'getDoctorPickerContext'], day: 'Day 2' },
+  { label: 'Every screen: its bundle, the build check', fns: ['crescGetBundle', 'getAppBuild'], day: 'Day 2' },
   { label: 'Appointments · Daily Ledger', fns: ['fetchDailyLedgerScoped'], day: 'Day 0' },
-  { label: 'Patients · search list', fns: ['getAllPatients'], day: 'Day 1' },
+  { label: 'Appointments · booking: slots, weekly hours, patient details', fns: ['getDoctorSlotsForDate', 'getDoctorSchedule', 'getPatientDemographics'], day: 'Day 2' },
+  { label: 'Patients · search list and profile', fns: ['getAllPatients', 'getUserProfile'], day: 'Day 1–2' },
+  { label: 'Patients · registration consent notice', fns: ['getDPDPNotice'], day: 'Day 2' },
   { label: 'EMR · patient directory', fns: ['getMasterPatientDirectory'], day: 'Day 1' },
-  { label: 'Appointments · booking form patient details', fns: ['getPatientDemographics'], day: 'Day 1' },
   { label: 'EMR · clinical timeline (outpatients; admitted patients still Apps Script)', fns: ['buildLongitudinalTimeline'], day: 'Day 1' },
-  { label: 'Command Center', fns: ['getDashboardData'], day: 'Day 2' },
+  { label: 'Command Center (every load, Refresh included)', fns: ['getDashboardData'], day: 'Day 2' },
   { label: 'Finance Hub and Master Ledger', fns: ['getAccountsDashboard'], day: 'Day 3' },
   { label: 'Billing ledger and Hospital Billing lists', fns: ['hb_getInvoices'], day: 'Day 4' },
   { label: 'Pharmacy stock, sales and GST reports', fns: [], day: 'Day 5' },
   { label: 'Lab queues, IP ward roster and running bill, admitted patients\' timelines', fns: [], day: 'Day 6' },
-  { label: 'All writes (bookings, bills, consultations) — stay on Apps Script until the server stage', fns: [], day: 'later' }
+  { label: 'Sign-in itself (password, authenticator code), account admin, label printing — Apps Script', fns: [], day: 'stays' },
+  { label: 'All writes (registrations, bookings, bills, consultations) — stay on Apps Script until the server stage', fns: [], day: 'later' }
 ];
 export function migrationStatus(env) {
   return { screens: MIGRATION_SCREENS.map((g) => ({ label: g.label, day: g.day,
