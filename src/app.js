@@ -198,6 +198,8 @@ export async function rpc(request, env, ctx, supabase) {
     if (edgeOn(env, fn) && edgeOn(env, 'runner')) {
       const r = await viaRunner(env, bytes);
       if (r instanceof Response) {
+        const at = r.headers.get('X-CresRx-Refresh');
+        if (at !== null) refreshSoon(bytes, Number(at), env, ctx);
         return new Response(r.body, { status: 200, headers: secure({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
           'X-CresRx-Source': 'supabase', 'X-CresRx-Via': 'app code on Supabase', 'X-CresRx-Runs': r.headers.get('X-CresRx-Runs') || '' }) });
       }
@@ -371,6 +373,24 @@ export async function identity(token, env, ctx, supabase) {
   if (REFRESHED.size > 500) REFRESHED.clear();
   MEMO.set(h, { id, until: Date.now() + IDENTITY_MEMO_MS });
   return id;
+}
+
+/**
+ * The Edge Function answered from a session stored over IDENTITY_REFRESH_MS
+ * ago: Apps Script re-checks it after the answer has gone, as identity() has
+ * it do for the calls answered here. `at`: which argument is the token.
+ */
+function refreshSoon(bytes, at, env, ctx) {
+  let token = '';
+  try { token = String((JSON.parse(new TextDecoder().decode(bytes)).args || [])[at] || ''); } catch (e) { return; }
+  if (!token || token.length > 200) return;
+  later(ctx, 'session refresh', (async () => {
+    const h = await tokenHash(token), now = Date.now();
+    if ((REFRESHED.get(h) || 0) > now - 60000) return;
+    if (REFRESHED.size > 500) REFRESHED.clear();
+    REFRESHED.set(h, now);
+    await appsScriptQuietly(env, 'getEdgeIdentity', [token]);
+  })());
 }
 
 /** The caller of a call the Worker answers, or Unsure (Apps Script answers). */

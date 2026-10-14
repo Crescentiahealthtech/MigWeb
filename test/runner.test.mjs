@@ -107,3 +107,20 @@ test('a bill made at a counter not moved yet is copied just after its answer, in
   // Never both: a call is flushed before its answer or after it.
   for (const fn of Object.keys(FLUSH_SOON)) assert.ok(!FLUSH_AFTER[fn] && !RUNNER.has(fn), fn);
 });
+
+test('a session stored over ten minutes ago is re-checked by Apps Script after the answer, once a minute at most', async () => {
+  const log = network(() => new Response('{"ok":true,"v":1}', { headers: { 'x-cresrx-refresh': '1' } }));
+  const waits = [];
+  const c = { waitUntil: (p) => waits.push(p) };
+  const r = await worker.fetch(call('getIPTimeline', ['IP-1', 'TOKEN-OLD']), env(), c);
+  assert.equal(r.headers.get('x-cresrx-source'), 'supabase');
+  await Promise.all(waits);
+  assert.deepEqual(log.apps, [{ fn: 'getEdgeIdentity', args: ['TOKEN-OLD'] }]);
+  await worker.fetch(call('getIPTimeline', ['IP-1', 'TOKEN-OLD']), env(), c);
+  await Promise.all(waits);
+  assert.equal(log.apps.length, 1);                                    // not again within the minute
+  const fresh = network(() => new Response('{"ok":true,"v":1}'));
+  await worker.fetch(call('getIPTimeline', ['IP-1', 'TOKEN-NEW']), env(), c);
+  await Promise.all(waits);
+  assert.equal(fresh.apps.length, 0);                                  // a recent session: nothing asked
+});
