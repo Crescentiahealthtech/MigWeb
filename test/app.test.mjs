@@ -149,7 +149,8 @@ test('the app page carries the migration badge, and /api/migration lists what ha
   assert.doesNotMatch(off, /migration\/status.js/);
   const list = await (await worker.fetch(new Request('https://migweb.example/api/migration'), env(), ctx)).json();
   const done = list.screens.filter((s) => s.done).map((s) => s.label);
-  assert.ok(done.includes('Appointments · Daily Ledger') && done.includes('Patients · search list'));
+  assert.ok(done.includes('Appointments · Daily Ledger') && done.includes('Patients · search list and profile'));
+  assert.ok(done.some((l) => /^Sign-in/.test(l)) && done.some((l) => /booking: slots/.test(l)));
   assert.ok(list.screens.some((s) => s.done && /Command Center/.test(s.label)));
   assert.ok(list.screens.some((s) => !s.done && /Finance Hub/.test(s.label)));
   const none = await (await worker.fetch(new Request('https://migweb.example/api/migration'), env({ EDGE_OFF: 'all' }), ctx)).json();

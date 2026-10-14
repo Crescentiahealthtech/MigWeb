@@ -15,8 +15,14 @@ export function splitSnapshot(text) {
   const t = String(text || '').trim();
   if (!t || t === 'null') return null;
   const head = /^\{\s*"data"\s*:\s*/.exec(t);
-  const tail = /,\s*"made"\s*:\s*(\d+)\s*\}$/.exec(t);
-  if (head && tail) return { dataText: t.slice(head[0].length, tail.index), made: Number(tail[1]) };
+  // The tail from the end, without a regular expression over the whole text
+  // (a screen bundle is hundreds of kilobytes).
+  const at = t.lastIndexOf('"made"');
+  const tail = at > 0 ? /^"made"\s*:\s*(\d+)\s*\}$/.exec(t.slice(at)) : null;
+  const comma = at > 0 ? t.lastIndexOf(',', at) : -1;
+  if (head && tail && comma > head[0].length && !t.slice(comma + 1, at).trim()) {
+    return { dataText: t.slice(head[0].length, comma).trimEnd(), made: Number(tail[1]) };
+  }
   const o = JSON.parse(t);                       // a reply laid out differently: read it properly
   if (!o || o.data === undefined) return null;
   return { dataText: JSON.stringify(o.data), made: Number(o.made) || 0 };
