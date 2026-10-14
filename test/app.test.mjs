@@ -99,10 +99,19 @@ test('a status change or booking asks Apps Script to copy the ledger\'s sheets b
   const log = network();
   for (const [fn, sheets] of [['updateAppointmentStatus', ['Appointments', 'Patients']], ['bookAppointmentScoped', ['Appointments', 'Patients']],
                               ['barcodeUpdateAppointment', ['Appointments', 'Patients']], ['registerPatient', ['Patients']],
-                              ['saveOPEncounterScoped', ['Appointments', 'Patients', 'OP_Encounters']], ['processPatientDischarge', ['IP_Admissions']]]) {
+                              ['processPatientDischarge', ['IP_Admissions']], ['saveIPNote', ['IP_Timeline_DB', 'IP_Pharmacy_Queue']],
+                              ['recordLedgerEntry', ['Finance_Master_Ledger', 'Audit_Event_Ledger']]]) {
     await worker.fetch(call(fn, ['A1', 'Arrived', 'ADMIN']), env(), ctx);
     assert.deepEqual(log.apps.at(-1), { fn, args: ['A1', 'Arrived', 'ADMIN'], flush: sheets });
   }
+  // The OP save marks every row it edits, so only those and its new rows
+  // are copied (window 0); a bill settled weeks later reads the watched
+  // columns too.
+  await worker.fetch(call('saveOPEncounterScoped', [{ patientId: 'DEMO0404' }, 'DOC']), env(), ctx);
+  assert.deepEqual(log.apps.at(-1), { fn: 'saveOPEncounterScoped', args: [{ patientId: 'DEMO0404' }, 'DOC'],
+    flush: ['Appointments', 'OP_Encounters', 'Clinical_Templates'], flushOpts: { window: 0, watch: false } });
+  await worker.fetch(call('settleReceivableBill', [{ billId: 'B1' }, 'ADMIN']), env(), ctx);
+  assert.deepEqual(log.apps.at(-1).flushOpts, { watch: true });
 });
 
 test('/rpc refuses other sites and GET; nothing works without APP_EXEC_URL', async () => {
@@ -152,7 +161,12 @@ test('the app page carries the migration badge, and /api/migration lists what ha
   assert.ok(done.includes('Appointments · Daily Ledger') && done.includes('Patients · search list and profile'));
   assert.ok(done.some((l) => /^Sign-in/.test(l)) && done.some((l) => /booking: slots/.test(l)));
   assert.ok(list.screens.some((s) => s.done && /Command Center/.test(s.label)));
-  assert.ok(list.screens.some((s) => !s.done && /Finance Hub/.test(s.label)));
+  for (const re of [/^Finance Hub/, /^IP Notes/, /^OP consultation/]) assert.ok(list.screens.some((s) => s.done && re.test(s.label)), String(re));
+  assert.ok(list.screens.some((s) => !s.done && /^Billing ledger/.test(s.label)));
+  // EDGE_OFF=runner: the screens the Edge Function answers go back to Apps Script; the Worker's own stay.
+  const runnerOff = await (await worker.fetch(new Request('https://migweb.example/api/migration'), env({ EDGE_OFF: 'runner' }), ctx)).json();
+  assert.ok(runnerOff.screens.some((s) => !s.done && /^Finance Hub/.test(s.label)));
+  assert.ok(runnerOff.screens.some((s) => s.done && /Command Center/.test(s.label)));
   const none = await (await worker.fetch(new Request('https://migweb.example/api/migration'), env({ EDGE_OFF: 'all' }), ctx)).json();
   assert.equal(none.screens.filter((s) => s.done).length, 0);
 });

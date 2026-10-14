@@ -8,7 +8,7 @@ the [MIGRATION](https://github.com/Crescentiahealthtech/MIGRATION) repo).
 | Path          | What                                                        |
 |---------------|-------------------------------------------------------------|
 | `/`           | **the whole app**, its page fetched from Apps Script and served from here (no Google frame) |
-| `/rpc`        | every server call the app makes: to Apps Script, **except the reads moved here, answered from Supabase** (sign-in calls, Daily Ledger, booking slots, Patients, Command Center; the table below) |
+| `/rpc`        | every server call the app makes: to Apps Script, **except the reads moved here, answered from Supabase** (sign-in calls, Daily Ledger, booking slots, Patients, Command Center; the Finance Hub, IP Notes and the OP consultation through the Edge Function; the tables below) |
 | `/ledger/`    | a stand-alone read-only ledger with Google sign-in          |
 | `/api/ledger` | its data: `GET ?date=yyyy-MM-dd&doctor=DOC001`              |
 | `/api/health` | is the Worker up; can it reach Supabase; is the app address set |
@@ -83,6 +83,36 @@ deletion through the Worker show on its ledger at once.
 **Changes made directly in the spreadsheet** (typing in the sheet) reach the
 copy with the next minute's sync, not at once.
 
+### Day 3: the Finance Hub, IP Notes and the OP consultation, by the app's own code
+
+These 37 reads are not ported here. The Worker sends them (`src/runner.js`,
+`RUNNER`), as the page sent them, to the Supabase Edge Function
+`cresrx-reads` (MIGRATION repo, `supabase/functions/cresrx-reads`), which
+runs **the app's own Apps Script code, unchanged**, on the Supabase copy: the
+spreadsheet it reads is the copy, the clock is the clinic's, the session is
+the one Apps Script stored. It runs in the database's region
+(`SUPABASE_REGION`, `wrangler.jsonc`) with 2 s of CPU per call, which the
+Worker's 10 ms could never give these functions.
+
+| Screen | Functions |
+|---|---|
+| Finance Hub | `getAccountsDashboard` (Master Ledger), `getFinanceDashboard`, `getReceivables`, `getAllDrawerStates`, `getShiftState`, `getPayables`, `getExpenseRegister`, `getTaxSummary`, `getAuditModules`, `getAuditLog`, `getInsuranceClaims`, `getInsurers`, `getPackages`, `getOpenAdmissions`, `getRunningTab`, `getIpVisits`, `getPharmacyLedger` |
+| IP Notes | `getActiveIPAdmissionsForNotes`, `getIPNotesBundle`, `getIPTimeline`, `getIPNotePermissions`, `getClinicalContext`, `getIPLabResults`, `getIPCareTeamPanel`, `getIPTeamRoles`, `getIPNotesLabCatalog` |
+| OP consultation | `getComposerContext`, `getPatientAllergies`, `getLastVisitRecall`, `listConsultTemplates`, `getAssistForDiagnosis`, `getOPDOrderableTests`, `fetchOPDrugMaster`, `fetchUniversalDrugs`, `fetchPharmacyMasterForIP`, `checkRxSafety`, `mcCardEligibility` |
+
+Anything the Edge Function cannot answer exactly (a read that writes, a
+Google-only service, a tab or setting not copied, a session it does not know)
+comes back as a reason, and Apps Script answers as before; the badge shows
+"(app code)" for its answers and the reason otherwise. `EDGE_OFF=runner` sends
+all of them back to Apps Script; a function's own name sends that one back.
+
+**Fresh after a change.** Every write of those screens copies what it changed
+before answering (`FLUSH_AFTER`; with `watch` when it edits older rows in
+place). Writes on screens not moved yet that change what these screens show —
+pharmacy, lab and hospital bills, the ward's case sheet and discharge summary —
+are copied just after their answer, on a call of their own, so nobody waits
+for it (`FLUSH_SOON`). Everything else arrives with the minute's sync.
+
 ## Two repositories, two ways of deploying
 
 - **MIGRATION** holds the Apps Script (`.gs`, `.html`). It goes to Google with
@@ -127,11 +157,11 @@ Cloudflare → **Workers & Pages** → **migweb** → **Settings** →
 | Name                  | Type   | Value                                                                 |
 |-----------------------|--------|-----------------------------------------------------------------------|
 | `APP_EXEC_URL`        | Secret | the Apps Script deployment's address, `https://script.google.com/macros/s/…/exec` — the same one the Worker behind your clinic address uses (its Variables and Secrets), or Apps Script → Deploy → Manage deployments |
-| `SUPABASE_SECRET_KEY` | Secret | the same `sb_secret_…` key Apps Script uses (Supabase → Project Settings → API Keys) |
+| `SUPABASE_SECRET_KEY` | Secret | the same `sb_secret_…` key Apps Script uses (Supabase → Project Settings → API Keys); the Edge Function `cresrx-reads` accepts calls carrying it |
 | `ALLOWED_EMAILS`      | Secret | for `/ledger/` only: Google accounts allowed in, comma-separated       |
 
-Never put these in a file in this repo. (`SUPABASE_URL` and
-`FIREBASE_PROJECT_ID` are in `wrangler.jsonc`; `keep_vars` stops a deploy
+Never put these in a file in this repo. (`SUPABASE_URL`, `SUPABASE_REGION`
+and `FIREBASE_PROJECT_ID` are in `wrangler.jsonc`; `keep_vars` stops a deploy
 from wiping what you set in the dashboard.)
 
 ### 2. Apps Script
@@ -181,6 +211,7 @@ npm test
 - `src/patients.js` — the patient register, demographics, timeline
 - `src/signin.js` — permissions, the doctor picker, a patient's profile, booking slots and weekly hours
 - `src/snapshots.js` — stored answers (Command Center), and switched-off cards taken out
+- `src/runner.js` — the reads the Edge Function answers with the app's own code (Day 3)
 - `public/ledger/index.html` — the page
 - `public/vendor/firebase-10.7.1/` — Firebase sign-in SDK, served from here
 - `test/` — offline checks (`npm test`)

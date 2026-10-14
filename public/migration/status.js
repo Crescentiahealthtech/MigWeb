@@ -44,7 +44,7 @@
     var attempt = function (retried) {
       return realFetch(input, init).then(function (res) {
         note(fn, Date.now() - t0, res.headers.get('X-CresRx-Source') || '?', res.ok, retried, res.headers.get('X-CresRx-Age'),
-             res.headers.get('X-CresRx-Why'));
+             res.headers.get('X-CresRx-Why'), res.headers.get('X-CresRx-Via'));
         return res;
       }, function (err) {
         if (!retried && SAFE_TO_RETRY[fn]) {
@@ -64,9 +64,9 @@
   function ms(n) { return n < 1000 ? n + ' ms' : (n / 1000).toFixed(1) + ' s'; }
   function el(tag, css, text) { var e = document.createElement(tag); if (css) e.style.cssText = css; if (text !== undefined) e.textContent = text; return e; }
 
-  function note(fn, took, source, ok, retried, age, why) {
+  function note(fn, took, source, ok, retried, age, why, via) {
     recent.unshift({ fn: fn || '(unnamed)', took: took, source: source, ok: ok, retried: retried, at: new Date(),
-                     age: age === null || age === undefined || age === '' ? null : Number(age), why: why || '' });
+                     age: age === null || age === undefined || age === '' ? null : Number(age), why: why || '', via: via || '' });
     if (recent.length > 40) recent.pop();
     // Background calls the page makes on its own (keeping the session
     // alive, checking the build) are listed but do not take over the badge.
@@ -92,7 +92,9 @@
   function draw(r) {
     if (!ensure()) return;
     var icon = r.source === 'supabase' ? '⚡' : r.source === 'failed' ? '⚠' : '⏳';
-    pill.textContent = icon + ' ' + ms(r.took) + ' · ' + (LABEL[r.source] || r.source) +
+    // "app code": answered by the Edge Function running the app's own
+    // Apps Script code on the copy (Day 3), not by a port in the Worker.
+    pill.textContent = icon + ' ' + ms(r.took) + ' · ' + (LABEL[r.source] || r.source) + (r.via ? ' (app code)' : '') +
       (r.age !== null && r.age !== undefined ? ' (copy ' + ms(r.age * 1000) + ' old)' : '') + ' · ' + r.fn + (r.retried ? ' (retried)' : '');
     pill.title = r.why ? 'Apps Script answered because: ' + r.why : 'Migration status (temporary). Click for details.';
     pill.style.borderColor = r.source === 'supabase' ? '#22c55e' : r.source === 'failed' ? '#ef4444' : 'rgba(148,163,184,.35)';
@@ -119,7 +121,8 @@
       var row = el('div', 'display:flex;gap:8px;margin:1px 0');
       row.appendChild(el('span', 'width:58px;text-align:right;font-variant-numeric:tabular-nums', ms(r.took)));
       row.appendChild(el('span', 'width:150px;color:' + (r.source === 'supabase' ? '#4ade80' : r.source === 'failed' ? '#f87171' : '#cbd5e1'),
-                         (LABEL[r.source] || r.source) + (r.age !== null && r.age !== undefined ? ' · ' + ms(r.age * 1000) + ' old' : '') + (r.retried ? ' ↻' : '')));
+                         (LABEL[r.source] || r.source) + (r.via ? ' (app code)' : '') +
+                         (r.age !== null && r.age !== undefined ? ' · ' + ms(r.age * 1000) + ' old' : '') + (r.retried ? ' ↻' : '')));
       row.appendChild(el('span', 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', r.fn));
       panel.appendChild(row);
       // A call the Worker could answer but left to Apps Script: why.

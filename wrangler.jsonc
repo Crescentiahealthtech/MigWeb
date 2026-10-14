@@ -15,6 +15,9 @@
   },
   "vars": {
     "SUPABASE_URL": "https://bzjwdpxygozgdwpdzixr.supabase.co",
+    // Where the project's database is (Mumbai): the Edge Function that runs
+    // the app's reads is asked to run there too (src/runner.js).
+    "SUPABASE_REGION": "ap-south-1",
     "FIREBASE_PROJECT_ID": "cresrxdemo"
   },
   // APP_EXEC_URL (the Apps Script deployment's …/exec address), SUPABASE_SECRET_KEY
