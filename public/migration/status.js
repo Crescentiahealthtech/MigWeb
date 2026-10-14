@@ -50,6 +50,13 @@
         if (r && r.source === 'apps-script' && r.took >= 2000) {
           res.clone().json().then(function (b) { if (b && b.t) { r.split = b.t; redraw(r); } }, function () {});
         }
+        // An answer from the Edge Function: its own time, and how much of it
+        // was loading tabs from the copy (0 when they were already in memory).
+        if (r && r.via && res.headers.get('X-CresRx-Ms')) {
+          r.split = { edge: Number(res.headers.get('X-CresRx-Ms')), load: Number(res.headers.get('X-CresRx-Load-Ms') || 0),
+                      reused: Number(res.headers.get('X-CresRx-Reused') || 0) };
+          redraw(r);
+        }
         return res;
       }, function (err) {
         if (!retried && SAFE_TO_RETRY[fn]) {
@@ -89,6 +96,10 @@
   function splitText(t) {
     if (!t) return '';
     var parts = [];
+    if (typeof t.edge === 'number') {
+      parts.push('on Supabase ' + ms(t.edge) + (t.load ? ' (loading tabs ' + ms(t.load) + ')' : ' (tabs already in memory)'));
+      return parts.join(' · ');
+    }
     if (typeof t.run === 'number') parts.push('call ' + ms(t.run));
     if (typeof t.sb === 'number') parts.push('copy to Supabase ' + ms(t.sb));
     if (t.steps && t.steps.length) parts.push(t.steps.map(function (s) { return s[0] + ' ' + ms(s[1]); }).join(', '));
@@ -118,7 +129,7 @@
     pill.textContent = icon + ' ' + ms(r.took) + ' · ' + (LABEL[r.source] || r.source) + (r.via ? ' (app code)' : '') +
       (r.age !== null && r.age !== undefined ? ' (copy ' + ms(r.age * 1000) + ' old)' : '') + ' · ' + r.fn + (r.retried ? ' (retried)' : '');
     pill.title = (r.why ? 'Apps Script answered because: ' + r.why : 'Migration status (temporary). Click for details.') +
-      (r.split ? '\nWhere the time went: ' + splitText(r.split) + ' (the rest: the network and Google)' : '');
+      (r.split ? '\nWhere the time went: ' + splitText(r.split) + (typeof r.split.edge === 'number' ? ' (the rest: the network)' : ' (the rest: the network and Google)') : '');
     pill.style.borderColor = r.source === 'supabase' ? '#22c55e' : r.source === 'failed' ? '#ef4444' : 'rgba(148,163,184,.35)';
   }
 
@@ -151,7 +162,8 @@
       if (r.why) panel.appendChild(el('div', 'margin:0 0 3px 66px;opacity:.65;font-size:11px', '↳ ' + r.why));
       // A slow call: where its time went inside Apps Script.
       if (r.split) panel.appendChild(el('div', 'margin:0 0 3px 66px;opacity:.65;font-size:11px', '⏱ ' + splitText(r.split) +
-                                        ' · network and Google ' + ms(Math.max(0, r.took - (r.split.run || 0) - (r.split.sb || 0)))));
+                                        (typeof r.split.edge === 'number' ? ' · network ' + ms(Math.max(0, r.took - r.split.edge))
+                                          : ' · network and Google ' + ms(Math.max(0, r.took - (r.split.run || 0) - (r.split.sb || 0))))));
     });
     if (!recent.length) panel.appendChild(el('div', 'opacity:.7', 'None yet.'));
   }

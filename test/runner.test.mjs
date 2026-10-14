@@ -79,8 +79,8 @@ test('writes never go to the Edge Function; each Day 3 and Day 4 write copies wh
     const spec = FLUSH_AFTER[fn];
     assert.deepEqual(log.apps[0].flush, Array.isArray(spec) ? spec : spec.sheets, fn);
   }
-  // Every served name is a read (get…, list…, fetch…, check…, hb_get…, hb_list…, a dose worked out, …Eligibility).
-  for (const fn of RUNNER) assert.match(fn, /^(hb_)?(get|list|fetch|check|buildTaperPlan$|suggestPaediatricDose$)|Eligibility$/, fn);
+  // Every served name is a read (get…, list…, fetch…, check…, search…, preview…, suggest…, a print, …Eligibility).
+  for (const fn of RUNNER) assert.match(fn, /^(hb_|mc|ds_)?(get|Get|list|fetch|check|search|preview|suggest)|^mtPrint|^buildTaperPlan$|Eligibility$/, fn);
 });
 
 test('a bill made at a counter not moved yet is copied just after its answer, in the background', async () => {
@@ -94,17 +94,17 @@ test('a bill made at a counter not moved yet is copied just after its answer, in
     return inner(url, init);
   };
   const waits = [];
-  const r = await worker.fetch(call('processPharmacyBill', [{ items: [] }, 'TOKEN']), env(), { waitUntil: (p) => waits.push(p) });
-  assert.deepEqual((await r.json()).v, { from: 'apps-script', fn: 'processPharmacyBill' });          // answered, the copy still on its way
+  const r = await worker.fetch(call('collectAndBillLabSample', [{ items: [] }, 'TOKEN']), env(), { waitUntil: (p) => waits.push(p) });
+  assert.deepEqual((await r.json()).v, { from: 'apps-script', fn: 'collectAndBillLabSample' });      // answered, the copy still on its way
   assert.equal(waits.length, 1);
   release();
   await Promise.all(waits);
-  assert.deepEqual(log.apps, [{ fn: 'processPharmacyBill', args: [{ items: [] }, 'TOKEN'] },
-                              { fn: 'getAppBuild', args: [], flush: FLUSH_SOON.processPharmacyBill }]);
-  // An old credit bill settled: its watched columns are compared too.
-  await worker.fetch(call('settleCreditBill', [{ invoiceNo: 'PH-1' }, 'TOKEN']), env(), { waitUntil: (p) => waits.push(p) });
+  assert.deepEqual(log.apps, [{ fn: 'collectAndBillLabSample', args: [{ items: [] }, 'TOKEN'] },
+                              { fn: 'getAppBuild', args: [], flush: FLUSH_SOON.collectAndBillLabSample }]);
+  // An old lab bill settled: its watched columns are compared too.
+  await worker.fetch(call('settleLabBillBalance', [{ billId: 'LB-1' }, 'TOKEN']), env(), { waitUntil: (p) => waits.push(p) });
   await Promise.all(waits);
-  assert.deepEqual(log.apps.at(-1), { fn: 'getAppBuild', args: [], flush: FLUSH_SOON.settleCreditBill.sheets, flushOpts: { watch: true } });
+  assert.deepEqual(log.apps.at(-1), { fn: 'getAppBuild', args: [], flush: FLUSH_SOON.settleLabBillBalance.sheets, flushOpts: { watch: true } });
   // Never both: a call is flushed before its answer or after it.
   for (const fn of Object.keys(FLUSH_SOON)) assert.ok(!FLUSH_AFTER[fn] && !RUNNER.has(fn), fn);
 });
