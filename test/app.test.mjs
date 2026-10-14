@@ -161,8 +161,8 @@ test('the app page carries the migration badge, and /api/migration lists what ha
   assert.ok(done.includes('Appointments · Daily Ledger') && done.includes('Patients · search list and profile'));
   assert.ok(done.some((l) => /^Sign-in/.test(l)) && done.some((l) => /booking: slots/.test(l)));
   assert.ok(list.screens.some((s) => s.done && /Command Center/.test(s.label)));
-  for (const re of [/^Finance Hub/, /^IP Notes/, /^OP consultation/]) assert.ok(list.screens.some((s) => s.done && re.test(s.label)), String(re));
-  assert.ok(list.screens.some((s) => !s.done && /^Billing ledger/.test(s.label)));
+  for (const re of [/^Finance Hub/, /^IP Notes/, /^OP consultation/, /^Hospital Billing/]) assert.ok(list.screens.some((s) => s.done && re.test(s.label)), String(re));
+  assert.ok(list.screens.some((s) => !s.done && /^Pharmacy/.test(s.label)));
   // EDGE_OFF=runner: the screens the Edge Function answers go back to Apps Script; the Worker's own stay.
   const runnerOff = await (await worker.fetch(new Request('https://migweb.example/api/migration'), env({ EDGE_OFF: 'runner' }), ctx)).json();
   assert.ok(runnerOff.screens.some((s) => !s.done && /^Finance Hub/.test(s.label)));

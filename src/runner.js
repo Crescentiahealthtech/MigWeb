@@ -26,7 +26,10 @@ export const RUNNER = new Set([
   // OP consultation
   'getComposerContext', 'getPatientAllergies', 'getLastVisitRecall', 'listConsultTemplates', 'getAssistForDiagnosis',
   'getOPDOrderableTests', 'fetchOPDrugMaster', 'fetchUniversalDrugs', 'fetchPharmacyMasterForIP', 'checkRxSafety',
-  'mcCardEligibility', 'buildTaperPlan', 'suggestPaediatricDose', 'getOPPrescriptionHtml', 'getOPReferralLetter'
+  'mcCardEligibility', 'buildTaperPlan', 'suggestPaediatricDose', 'getOPPrescriptionHtml', 'getOPReferralLetter',
+  // Hospital Billing, the billing ledgers, the IP ledger (Day 4)
+  'hb_getBootstrap', 'hb_getPatientContext', 'hb_getInvoices', 'hb_getInvoice', 'hb_listOpenOrders',
+  'getIpBillingStatus', 'getIpDraftBillHtml', 'getIpAdvanceReceipt', 'getIPHistory', 'getAdmissionDetail', 'getLabLedger'
 ]);
 
 /**

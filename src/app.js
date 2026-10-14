@@ -114,7 +114,17 @@ export const FLUSH_AFTER = {
   saveConsultTemplate: ['OP_Consult_Templates'], applyConsultTemplate: ['OP_Consult_Templates'],
   deleteConsultTemplate: ['OP_Consult_Templates'], saveRxBundle: ['Rx_Bundles'], noteRxBundleUsed: ['Rx_Bundles'],
   deleteRxBundle: ['Rx_Bundles'], deletePhraseTemplate: ['Clinical_Templates'], promotePhraseToClinic: ['Clinical_Templates'],
-  saveExamDefaults: ['Doctor_Exam_Defaults']
+  saveExamDefaults: ['Doctor_Exam_Defaults'],
+  // Hospital Billing (its lists and the billing ledger are answered from the
+  // copy from Day 4): a bill saved, paid, cancelled or its mode changed is on
+  // the ledger the screen reloads. A bill also closes the tests it billed
+  // (Investigation_Orders, the "orders to bill" list) and posts an
+  // inpatient's lines to the running bill (IP_Charges).
+  hb_saveInvoice: { sheets: ['Hospital_Invoices', 'Hospital_Invoice_Items', 'Investigation_Orders', 'IP_Charges', LEDGER, AUDIT], watch: true },
+  hb_recordPayment: { sheets: ['Hospital_Invoices', 'IP_Settlements', LEDGER, AUDIT], watch: true },
+  hb_cancelInvoice: { sheets: ['Hospital_Invoices', 'Investigation_Orders', LEDGER, AUDIT], watch: true },
+  hb_changePaymentMode: { sheets: ['Hospital_Invoices', 'IP_Advances', LEDGER, AUDIT], watch: true },
+  hb_dismissOrder: { sheets: ['Investigation_Orders'], watch: true }
 };
 
 /**
@@ -137,10 +147,6 @@ export const FLUSH_SOON = {
   labCancelBill: { sheets: ['LAB_BILLING', 'IP_Charges', LEDGER, AUDIT], watch: true },
   labCancelPendingOrder: { sheets: ['LAB_BILLING'], watch: true },
   settleLabBillBalance: { sheets: ['LAB_BILLING', LEDGER, AUDIT], watch: true },
-  hb_saveInvoice: ['Hospital_Invoices', 'IP_Charges', LEDGER, AUDIT],
-  hb_recordPayment: { sheets: ['Hospital_Invoices', 'IP_Settlements', LEDGER, AUDIT], watch: true },
-  hb_cancelInvoice: { sheets: ['Hospital_Invoices', LEDGER, AUDIT], watch: true },
-  hb_changePaymentMode: { sheets: ['Hospital_Invoices', 'IP_Advances', LEDGER, AUDIT], watch: true },
   // Results entered, verified or flagged at the lab, and reports from outside
   // labs: IP Notes' investigations panel.
   saveLabResultsDraft: ['LAB_RESULTS', 'LAB_ORDERS'], submitLabResults: ['LAB_RESULTS', 'LAB_ORDERS'],
@@ -552,7 +558,7 @@ async function bundle([name], env, ctx, supabase, request) {
 }
 
 /** The calls the Worker answers itself, by the name the page calls them. */
-const EDGE = {
+export const EDGE = {
   fetchDailyLedgerScoped: edgeLedger,
   getDashboardData: dashboard,
   // getAllPatients(sessionToken) — CodeMV.gs
@@ -705,7 +711,9 @@ export const MIGRATION_SCREENS = [
           'getExpenseRegister', 'getTaxSummary', 'getAuditLog', 'getInsuranceClaims', 'getOpenAdmissions', 'getRunningTab'], day: 'Day 3' },
   { label: 'IP Notes: patient list, opening a patient, timeline, care team, investigations, printed notes', fns: ['getActiveIPAdmissionsForNotes', 'getIPNotesBundle', 'getIPTimeline', 'getIPLabResults', 'getIPNotesPrintHtml'], day: 'Day 3' },
   { label: 'OP consultation: composer, last visit, allergies, templates, drug and test lists, safety check, doses, printed prescription', fns: ['getComposerContext', 'getLastVisitRecall', 'getPatientAllergies', 'fetchOPDrugMaster', 'checkRxSafety', 'suggestPaediatricDose', 'getOPPrescriptionHtml'], day: 'Day 3' },
-  { label: 'Billing ledger and Hospital Billing lists', fns: ['hb_getInvoices'], day: 'Day 4' },
+  { label: 'Hospital Billing: patient lookup, the billing ledger, reprints, orders to bill, IP bill status, draft bill, advance receipts; the lab\'s billing ledger; the IP ledger (the app\'s own code on Supabase)',
+    fns: ['hb_getBootstrap', 'hb_getPatientContext', 'hb_getInvoices', 'hb_getInvoice', 'hb_listOpenOrders', 'getIpBillingStatus',
+          'getIpDraftBillHtml', 'getIpAdvanceReceipt', 'getLabLedger', 'getIPHistory', 'getAdmissionDetail'], day: 'Day 4' },
   { label: 'Pharmacy stock, sales and GST reports', fns: [], day: 'Day 5' },
   { label: 'Lab queues, IP ward roster and running bill, admitted patients\' timelines', fns: [], day: 'Day 6' },
   { label: 'Sign-in itself (password, authenticator code), account admin, label printing — Apps Script', fns: [], day: 'stays' },
