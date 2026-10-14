@@ -47,7 +47,21 @@ export const RUNNER = new Set([
   'getPharmacySalesAnalysis', 'getPharmacyGstSummary', 'getScheduleDrugRegister', 'getPharmacyPurchases', 'getPharmacyPurchase',
   'getPurchaseLookups', 'getPharmacyBatchHistory', 'getStockAdjustReasons', 'getDisposalReasons', 'suggestDrugSchedule',
   'previewPackSizes', 'previewScheduleClassification', 'getSupplierReturns', 'getSupplierReturnStock', 'getSupplierReturnPrint',
-  'getSupplierCredit', 'getSupplierCreditReport'
+  'getSupplierCredit', 'getSupplierCreditReport',
+  // Day 6: the lab (queues, orders, result entry, collection, labels, catalogue,
+  // new requests, reports, bills, billing, cancelled, critical values), the IP
+  // case sheet, the discharge desk, the patient portal, consent, barcodes
+  'getLabWorkspaceData', 'getLabOrderPanel', 'buildResultEntrySheet', 'getSuggestedTubes', 'getSampleLabelData',
+  'verifyCollectionIdentity', 'getLabCatalog', 'getOrderableTests', 'lookupLabPatient', 'searchPatientByMobile',
+  'getLabReportHtml', 'getLabBillHtml', 'getLabBillingWorkspace', 'getLabDailyCollection', 'getLabReceiptHtml',
+  'labListCancelled', 'labListCriticalUnacked', 'getIPCasesheetContext', 'getIPCasesheetWard', 'getIPCasesheetPrintHtml',
+  'ds_getDiff', 'ds_getSourceItem', 'portalHome', 'portalLabResults', 'portalRecords', 'portalBookableDoctors',
+  'portalDoctorSlots', 'getConsentStatus', 'getNomination', 'getScanRouterConfig', 'resolveScan', 'getPatientLabelData',
+  'ds_getQueue', 'ds_getSummary', 'ds_getSummaryLite', 'ds_getGateStatus', 'ds_getStatusMap', 'ds_getPickers',
+  'ds_getSignableDoctors', 'getIPDiabeticPrintHtml', 'getIPDrugChartPrintHtml', 'getIPEWSPrintHtml', 'searchLabRecords',
+  // The clinical timeline: the Worker answers outpatients itself (src/app.js);
+  // an admitted patient's, which it leaves, goes here before Apps Script.
+  'buildLongitudinalTimeline'
 ]);
 
 /**
@@ -65,7 +79,10 @@ export const WARM = {
   'emr-op': ['getComposerContext', 'getLastVisitRecall', 'fetchOPDrugMaster', 'listConsultTemplates'],
   'emr-ward': ['getActiveIPWard', 'getWardBedBoard', 'getBedStatuses', 'getIPHistory'],
   'emr-records': ['getIPRecordsLedger'],
-  lab: ['getLabLedger', 'getPatientLabResults']
+  lab: ['getLabWorkspaceData', 'getLabBillingWorkspace', 'getLabCatalog', 'getLabLedger', 'labListCriticalUnacked'],
+  'emr-discharge': ['ds_getQueue', 'ds_getPickers', 'ds_getSignableDoctors'],
+  'emr-casesheet': ['getIPCasesheetWard', 'getComposerContext', 'fetchOPDrugMaster'],
+  patient: ['portalHome', 'portalRecords', 'portalLabResults']
 };
 const WARMED = new Map();     // bundle -> when this instance last asked
 const WARM_EVERY_MS = 60 * 1000;

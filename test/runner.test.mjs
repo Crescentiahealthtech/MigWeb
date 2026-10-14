@@ -79,11 +79,17 @@ test('writes never go to the Edge Function; each Day 3 and Day 4 write copies wh
     const spec = FLUSH_AFTER[fn];
     assert.deepEqual(log.apps[0].flush, Array.isArray(spec) ? spec : spec.sheets, fn);
   }
-  // Every served name is a read (get…, list…, fetch…, check…, search…, preview…, suggest…, a print, …Eligibility).
-  for (const fn of RUNNER) assert.match(fn, /^(hb_|mc|ds_)?(get|Get|list|fetch|check|search|preview|suggest)|^mtPrint|^buildTaperPlan$|Eligibility$/, fn);
+  // Every served name is a read (get…, list…, fetch…, check…, search…, preview…, suggest…, build…, lookup…, a print, …Eligibility).
+  for (const fn of RUNNER) assert.match(fn, /^(hb_|mc|ds_)?(get|Get|list|fetch|check|search|preview|suggest|build|lookup|verify|resolve|portal|labList)|^mtPrint|Eligibility$/, fn);
 });
 
-test('a bill made at a counter not moved yet is copied just after its answer, in the background', async () => {
+test('a write listed to copy in the background is copied just after its answer (none is, since Day 6)', async () => {
+  assert.deepEqual(Object.keys(FLUSH_SOON), []);
+  FLUSH_SOON.collectAndBillLabSample = ['LAB_BILLING', 'IP_Charges'];
+  FLUSH_SOON.settleLabBillBalance = { sheets: ['LAB_BILLING'], watch: true };
+  const after = { a: FLUSH_AFTER.collectAndBillLabSample, b: FLUSH_AFTER.settleLabBillBalance };
+  delete FLUSH_AFTER.collectAndBillLabSample; delete FLUSH_AFTER.settleLabBillBalance;
+  try {
   const log = network(() => { throw new Error('a write reached the Edge Function'); });
   // The copy's call is held until released: the bill's answer must not wait for it.
   let release; const held = new Promise((r) => { release = r; });
@@ -107,6 +113,27 @@ test('a bill made at a counter not moved yet is copied just after its answer, in
   assert.deepEqual(log.apps.at(-1), { fn: 'getAppBuild', args: [], flush: FLUSH_SOON.settleLabBillBalance.sheets, flushOpts: { watch: true } });
   // Never both: a call is flushed before its answer or after it.
   for (const fn of Object.keys(FLUSH_SOON)) assert.ok(!FLUSH_AFTER[fn] && !RUNNER.has(fn), fn);
+  } finally {
+    delete FLUSH_SOON.collectAndBillLabSample; delete FLUSH_SOON.settleLabBillBalance;
+    FLUSH_AFTER.collectAndBillLabSample = after.a; FLUSH_AFTER.settleLabBillBalance = after.b;
+  }
+});
+
+test('an admitted patient\'s timeline, which the Worker\'s own port leaves, goes to the Edge Function before Apps Script', async () => {
+  // Supabase's REST calls are not stood in for here: the Worker's port cannot
+  // answer, so the runner is asked, and it answers.
+  const log = network(() => new Response('{"ok":true,"v":{"found":true,"events":[1]}}', { headers: { 'x-cresrx-ms': '120', 'x-cresrx-load-ms': '0' } }));
+  const r = await worker.fetch(call('buildLongitudinalTimeline', ['DEMO0002', 'TOKEN']), env(), ctx);
+  assert.deepEqual(await r.json(), { ok: true, v: { found: true, events: [1] } });
+  assert.equal(r.headers.get('x-cresrx-via'), 'app code on Supabase');
+  assert.equal(r.headers.get('x-cresrx-ms'), '120');
+  assert.equal(log.edge.length, 1);
+  assert.ok(log.apps.every((b) => b.fn !== 'buildLongitudinalTimeline'));      // Apps Script is asked who the session is, nothing more
+  // Switched off by name: neither the port nor the runner.
+  const off = network(() => { throw new Error('reached the Edge Function'); });
+  const r2 = await worker.fetch(call('buildLongitudinalTimeline', ['DEMO0002', 'TOKEN']), env({ EDGE_OFF: 'buildLongitudinalTimeline' }), ctx);
+  assert.equal(r2.headers.get('x-cresrx-source'), 'apps-script');
+  assert.equal(off.edge.length, 0);
 });
 
 test('a session stored over ten minutes ago is re-checked by Apps Script after the answer, once a minute at most', async () => {

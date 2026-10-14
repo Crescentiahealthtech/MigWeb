@@ -283,3 +283,14 @@ test('a screen opening asks the Edge Function to load the tabs its reads need, o
   await off.settle();
   assert.equal((off.log.edge || []).length, 0);
 });
+
+test('the letterhead for printouts comes from its stored copy; without one, Apps Script answers and stores it', async () => {
+  const clinic = { success: true, clinic: { name: 'DEMO CLINIC', address: '1, Demo Street' }, message: '' };
+  let { log, ctx } = network({ snapshots: { clinic: { data: clinic, age: 1000 } } });
+  assert.deepEqual(await call('getClinicProfile', [], ctx), { source: 'supabase', why: null, age: '1', v: clinic });
+  assert.equal(log.apps.length, 0);
+  ({ log, ctx } = network());
+  const r = await call('getClinicProfile', [], ctx);
+  assert.equal(r.source, 'apps-script');
+  assert.equal(r.why, 'not stored yet');
+});

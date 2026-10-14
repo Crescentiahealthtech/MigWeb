@@ -158,7 +158,47 @@ export const FLUSH_AFTER = {
   // Mother & child, visiting consultants (Day 4b).
   mcOpenAntenatal: ['ANC_Register'], mcCloseAntenatal: { sheets: ['ANC_Register'], watch: true }, mcRecordAntenatalVisit: ['ANC_Visits', 'ANC_Register'],
   mcRecordImmunisation: ['Immunisation_Given'], mcMarkDoseNotGiven: ['Immunisation_Given'],
-  declareVisitingConsultant: ['Visiting_Sessions', 'Doctors'], endVisitingConsultant: { sheets: ['Visiting_Sessions'], watch: true }
+  declareVisitingConsultant: ['Visiting_Sessions', 'Doctors'], endVisitingConsultant: { sheets: ['Visiting_Sessions'], watch: true },
+  // The lab (Day 6: its queues, bills and records are answered from the
+  // copy). A request, a sample collected, received or rejected, results
+  // entered and verified, a bill made, cancelled or settled.
+  createLabRequest: ['LAB_ORDERS'],
+  advanceOrderStatus: { sheets: ['LAB_ORDERS'], watch: true },
+  collectLabSample: { sheets: ['LAB_ORDERS', 'LAB_SAMPLES', 'LAB_TAT_LOG'], watch: true },
+  receiveLabSample: { sheets: ['LAB_ORDERS', 'LAB_SAMPLES'], watch: true },
+  receiveLabSampleByBarcode: { sheets: ['LAB_ORDERS', 'LAB_SAMPLES'], watch: true },
+  rejectLabSample: { sheets: ['LAB_ORDERS', 'LAB_SAMPLES'], watch: true },
+  collectAndBillLabSample: { sheets: ['LAB_BILLING', 'LAB_ORDERS', 'LAB_SAMPLES', 'LAB_TAT_LOG', 'IP_Charges', LEDGER, AUDIT], watch: true },
+  generateLabBill: { sheets: ['LAB_BILLING', 'LAB_ORDERS', 'IP_Charges', LEDGER, AUDIT], watch: true },
+  labCancelBill: { sheets: ['LAB_BILLING', 'LAB_ORDERS', 'IP_Charges', LEDGER, AUDIT], watch: true },
+  labCancelPendingOrder: { sheets: ['LAB_BILLING', 'LAB_ORDERS'], watch: true },
+  settleLabBillBalance: { sheets: ['LAB_BILLING', LEDGER, AUDIT], watch: true },
+  saveLabResultsDraft: { sheets: ['LAB_RESULTS', 'LAB_ORDERS'], watch: true },
+  submitLabResults: { sheets: ['LAB_RESULTS', 'LAB_ORDERS'], watch: true },
+  verifyLabResults: { sheets: ['LAB_RESULTS', 'LAB_ORDERS', 'LAB_TAT_LOG'], watch: true },
+  labAcknowledgeCritical: { sheets: ['LAB_RESULTS'], watch: true },
+  // The catalogue is short and edited anywhere in it: all of it re-checked.
+  saveCatalogEntry: { sheets: ['LAB_TEST_CATALOG'], window: 600 },
+  savePanelWithParameters: { sheets: ['LAB_TEST_CATALOG'], window: 600 },
+  setCatalogActive: { sheets: ['LAB_TEST_CATALOG'], window: 600 },
+  // Reports from outside labs (IP Notes' investigations, lab results).
+  saveExternalLabResult: ['External_Lab_Results', 'Investigation_Orders', 'LAB_ORDERS'],
+  voidExternalLabResult: { sheets: ['External_Lab_Results', 'Investigation_Orders', 'LAB_ORDERS'], watch: true },
+  // The IP case sheet and the discharge summary desk.
+  saveIPCasesheet: { sheets: ['IP_CaseSheets_DB', 'IP_Timeline_DB', 'IP_Pharmacy_Queue', 'Clinical_Templates', 'IP_Admissions'], watch: true },
+  amendIPCasesheet: { sheets: ['IP_CaseSheets_DB', 'IP_Timeline_DB', 'IP_Pharmacy_Queue'], watch: true },
+  ds_initiateDischarge: { sheets: ['DS_Summaries', 'DS_Snapshots', 'DS_Working', 'DS_Workflow_Log', 'IP_Admissions'], watch: true },
+  ds_saveWorking: { sheets: ['DS_Summaries', 'DS_Working', 'DS_Workflow_Log'], watch: true },
+  ds_regenerate: { sheets: ['DS_Summaries', 'DS_Snapshots', 'DS_Working', 'DS_Workflow_Log'], watch: true },
+  ds_submit: { sheets: ['DS_Summaries', 'DS_Snapshots', 'DS_Working', 'DS_Workflow_Log'], watch: true },
+  ds_return: { sheets: ['DS_Summaries', 'DS_Workflow_Log'], watch: true },
+  ds_sign: { sheets: ['DS_Summaries', 'DS_Snapshots', 'DS_Working', 'DS_Workflow_Log', 'IP_Admissions', 'IP_Timeline_DB'], watch: true },
+  ds_startAmendment: { sheets: ['DS_Summaries', 'DS_Working', 'DS_Workflow_Log'], watch: true },
+  ds_discardAmendment: { sheets: ['DS_Summaries', 'DS_Working', 'DS_Workflow_Log'], watch: true },
+  ds_cancel: { sheets: ['DS_Summaries', 'DS_Workflow_Log', 'IP_Admissions'], watch: true },
+  // Consent and nominees (the patient portal and the privacy console).
+  recordConsent: { sheets: ['Consent_Register', 'Patients'], watch: true }, withdrawConsent: { sheets: ['Consent_Register'], watch: true },
+  recordNomination: ['Nomination_Register'], revokeNomination: { sheets: ['Nomination_Register'], watch: true }
 };
 
 /**
@@ -171,19 +211,9 @@ export const FLUSH_AFTER = {
  * sync would get there within a minute anyway.
  */
 export const FLUSH_SOON = {
-  collectAndBillLabSample: ['LAB_BILLING', 'IP_Charges', LEDGER, AUDIT], generateLabBill: ['LAB_BILLING', 'IP_Charges', LEDGER, AUDIT],
-  labCancelBill: { sheets: ['LAB_BILLING', 'IP_Charges', LEDGER, AUDIT], watch: true },
-  labCancelPendingOrder: { sheets: ['LAB_BILLING'], watch: true },
-  settleLabBillBalance: { sheets: ['LAB_BILLING', LEDGER, AUDIT], watch: true },
-  // Results entered, verified or flagged at the lab, and reports from outside
-  // labs: IP Notes' investigations panel.
-  saveLabResultsDraft: ['LAB_RESULTS', 'LAB_ORDERS'], submitLabResults: ['LAB_RESULTS', 'LAB_ORDERS'],
-  verifyLabResults: { sheets: ['LAB_RESULTS', 'LAB_ORDERS'], watch: true }, labAcknowledgeCritical: { sheets: ['LAB_RESULTS'], watch: true },
-  saveExternalLabResult: ['External_Lab_Results', 'Investigation_Orders', 'LAB_ORDERS'],
-  voidExternalLabResult: { sheets: ['External_Lab_Results', 'Investigation_Orders', 'LAB_ORDERS'], watch: true },
-  saveIPCasesheet: ['IP_CaseSheets_DB', 'IP_Timeline_DB', 'IP_Pharmacy_Queue', 'Clinical_Templates'],
-  amendIPCasesheet: { sheets: ['IP_CaseSheets_DB', 'IP_Timeline_DB', 'IP_Pharmacy_Queue'], watch: true },
-  ds_sign: ['DS_Summaries', 'IP_Timeline_DB']
+  // None left since Day 6: every screen whose sheets a write changes is
+  // answered from the copy, so every such write copies before it answers
+  // (FLUSH_AFTER). Kept for a write that may wait a moment.
 };
 
 export const execUrl = (env) => String((env && (env.APP_EXEC_URL || env.APP_EXEC_URL_DEFAULT)) || '').trim();
@@ -228,7 +258,10 @@ export async function rpc(request, env, ctx, supabase) {
     }
   } else if (EDGE[fn]) {
     why = 'switched off (EDGE_OFF)';
-  } else if (RUNNER.has(fn)) {
+  }
+  // The app's own code on the copy: a read only it serves, or one the
+  // Worker's port leaves (an admitted patient's timeline).
+  if (RUNNER.has(fn) && (!EDGE[fn] || (why && why !== 'switched off (EDGE_OFF)'))) {
     if (edgeOn(env, fn) && edgeOn(env, 'runner')) {
       const r = await viaRunner(env, bytes);
       if (r instanceof Response) {
@@ -506,6 +539,7 @@ const DASH_FRESH_ASKED_MS = 15 * 1000;    // …or this, when the screen was ope
 const BUNDLE_FRESH_MS = 3 * 60 * 1000;    // a screen bundle is re-read from Apps Script after this
 const BUILD_FRESH_MS = 5 * 60 * 1000;
 const NOTICE_FRESH_MS = 10 * 60 * 1000;
+const CLINIC_FRESH_MS = 10 * 60 * 1000;
 
 /**
  * A stored answer, `make(dataText, age)` turning it into the reply; or null
@@ -643,6 +677,10 @@ export const EDGE = {
   },
   // crescGetBundle(name) — Module_Loader.gs
   crescGetBundle: bundle,
+  // getClinicProfile() — Clinic_Profile.gs (no session: the letterhead printed
+  // on every bill), from the copy Apps Script leaves; re-read every 10 minutes.
+  getClinicProfile: async (args, env, ctx, sb) => (await stored('clinic', CLINIC_FRESH_MS,
+    () => appsScriptQuietly(env, 'getClinicProfile', []), ctx, sb, plain)) || notYet(),
   // getAppBuild() — App_Version.gs (no session: the build every visitor is sent)
   getAppBuild: async (args, env, ctx, sb) => (await stored('build', BUILD_FRESH_MS,
     () => appsScriptQuietly(env, 'getAppBuild', []), ctx, sb, plain)) || notYet(),
@@ -766,7 +804,10 @@ export const MIGRATION_SCREENS = [
   { label: 'Pharmacy: billing desk, dashboard, returns, stock, purchases, supplier returns, sales, GST and Schedule H reports (the app\'s own code on Supabase)',
     fns: ['fetchBillableStock', 'fetchPharmacyInventory', 'getPatientBillingContext', 'getPharmacyDashboard', 'getPharmacyStockList',
           'getPharmacySalesAnalysis', 'getPharmacyGstSummary', 'getPharmacyPurchases', 'getSupplierReturns'], day: 'Day 5' },
-  { label: 'Lab queues, IP ward roster and running bill, admitted patients\' timelines', fns: [], day: 'Day 6' },
+  { label: 'Lab: queues, orders, result entry, collection, labels, catalogue, reports, bills, billing, records (the app\'s own code on Supabase)',
+    fns: ['getLabWorkspaceData', 'getLabOrderPanel', 'buildResultEntrySheet', 'getLabCatalog', 'getLabReportHtml', 'getLabBillingWorkspace', 'searchLabRecords'], day: 'Day 6' },
+  { label: 'Discharge desk, IP case sheet, admitted patients\' timelines, patient portal, consent, barcodes (the app\'s own code on Supabase)',
+    fns: ['ds_getQueue', 'ds_getSummary', 'getIPCasesheetContext', 'buildLongitudinalTimeline', 'portalHome', 'getConsentStatus', 'resolveScan'], day: 'Day 6' },
   { label: 'Sign-in itself (password, authenticator code), account admin, label printing — Apps Script', fns: [], day: 'stays' },
   { label: 'All writes (registrations, bookings, bills, consultations) — stay on Apps Script until the server stage', fns: [], day: 'later' }
 ];
