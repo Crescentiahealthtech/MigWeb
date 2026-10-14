@@ -26,8 +26,65 @@ export const RUNNER = new Set([
   // OP consultation
   'getComposerContext', 'getPatientAllergies', 'getLastVisitRecall', 'listConsultTemplates', 'getAssistForDiagnosis',
   'getOPDOrderableTests', 'fetchOPDrugMaster', 'fetchUniversalDrugs', 'fetchPharmacyMasterForIP', 'checkRxSafety',
-  'mcCardEligibility', 'buildTaperPlan', 'suggestPaediatricDose', 'getOPPrescriptionHtml', 'getOPReferralLetter'
+  'mcCardEligibility', 'buildTaperPlan', 'suggestPaediatricDose', 'getOPPrescriptionHtml', 'getOPReferralLetter',
+  // Hospital Billing, the billing ledgers, the IP ledger (Day 4)
+  'hb_getBootstrap', 'hb_getPatientContext', 'hb_getInvoices', 'hb_getInvoice', 'hb_listOpenOrders',
+  'getIpBillingStatus', 'getIpDraftBillHtml', 'getIpAdvanceReceipt', 'getIPHistory', 'getAdmissionDetail', 'getLabLedger',
+  // Day 4b: reads left on screens moved earlier (availability grid, stock
+  // alerts, lab results, dose reference, the visiting consultant's state,
+  // outside labs, mother & child, MLC, reminders), the ward and bed map, IP
+  // charts and records. Not listVisitingConsultants: it closes stale
+  // sessions on the sheet as it reads (a write), by their tokens (never copied).
+  'getDoctorAvailabilityGrid', 'getStockAlerts', 'getPatientLabResults', 'getDoseReference', 'getVisitingConsultantState',
+  'getExternalLabFormContext', 'getOutsideLabPrintHtml', 'mcGetAntenatal', 'mcGetImmunisation',
+  'getMLCRecords', 'getMLCRegister', 'getMLCStatus', 'getMLCPrintHtml', 'getReminderQueue',
+  'getActiveIPWard', 'getAvailableBedsByWard', 'getBedStatuses', 'getConsultantList', 'getWardBedBoard', 'getWardList',
+  'fetchPatientForAdmit', 'getIPDiabeticChart', 'getOTForm', 'getOTPrintHtml', 'getIPRecordsLedger', 'getIPRecordFile',
+  'getIPRecordPrintHtml', 'getDischargeSummaryFull', 'mtPrintOPEncounter', 'ds_getPrintHtml',
+  // Day 5: Pharmacy (billing desk, dashboard, returns, reports, purchases, stock, supplier returns)
+  'fetchBillableStock', 'fetchPharmacyInventory', 'getPatientBillingContext', 'getInvoiceForPrint', 'searchPharmacyInvoices',
+  'getPharmacyDashboard', 'getPharmacyFinanceSummary', 'getInvoiceForReturn', 'getPendingCreditBills', 'getPharmacyStockList',
+  'getPharmacySalesAnalysis', 'getPharmacyGstSummary', 'getScheduleDrugRegister', 'getPharmacyPurchases', 'getPharmacyPurchase',
+  'getPurchaseLookups', 'getPharmacyBatchHistory', 'getStockAdjustReasons', 'getDisposalReasons', 'suggestDrugSchedule',
+  'previewPackSizes', 'previewScheduleClassification', 'getSupplierReturns', 'getSupplierReturnStock', 'getSupplierReturnPrint',
+  'getSupplierCredit', 'getSupplierCreditReport'
 ]);
+
+/**
+ * The reads each screen bundle (crescGetBundle) makes as it opens. When the
+ * bundle is fetched the Edge Function is asked to load the tabs they read
+ * (warmRunner), so the screen's first calls find them in memory.
+ */
+export const WARM = {
+  billing: ['hb_getBootstrap', 'hb_getPatientContext', 'hb_getInvoices', 'hb_listOpenOrders', 'getIpBillingStatus',
+            'getOpenAdmissions', 'getRunningTab', 'getShiftState'],
+  pharmacy: ['fetchBillableStock', 'getPatientBillingContext', 'getPharmacyDashboard', 'getPharmacyStockList',
+             'fetchPharmacyInventory', 'getPendingCreditBills', 'getStockAlerts', 'getShiftState'],
+  accounts: ['getAccountsDashboard', 'getFinanceDashboard', 'getAllDrawerStates', 'getShiftState', 'getReceivables'],
+  'emr-notes': ['getActiveIPAdmissionsForNotes', 'getIPNotesBundle', 'getIPTimeline', 'getIPDiabeticChart'],
+  'emr-op': ['getComposerContext', 'getLastVisitRecall', 'fetchOPDrugMaster', 'listConsultTemplates'],
+  'emr-ward': ['getActiveIPWard', 'getWardBedBoard', 'getBedStatuses', 'getIPHistory'],
+  'emr-records': ['getIPRecordsLedger'],
+  lab: ['getLabLedger', 'getPatientLabResults']
+};
+const WARMED = new Map();     // bundle -> when this instance last asked
+const WARM_EVERY_MS = 60 * 1000;
+
+/** Asks the Edge Function to load the tabs a screen is about to read. Never throws. */
+export async function warmRunner(env, bundle) {
+  const names = WARM[bundle];
+  if (!names || !env.SUPABASE_URL || !env.SUPABASE_SECRET_KEY) return;
+  const last = WARMED.get(bundle) || 0;
+  if (Date.now() - last < WARM_EVERY_MS) return;
+  WARMED.set(bundle, Date.now());
+  try {
+    const headers = { apikey: env.SUPABASE_SECRET_KEY, 'Content-Type': 'application/json' };
+    if (env.SUPABASE_REGION) headers['x-region'] = String(env.SUPABASE_REGION);
+    const res = await fetch(String(env.SUPABASE_URL).replace(/\/+$/, '') + '/functions/v1/cresrx-reads',
+      { method: 'POST', body: JSON.stringify({ fn: '__warm', args: names }), headers });
+    if (res.body) await res.body.cancel();
+  } catch (e) { /* the screen's own calls load them */ }
+}
 
 /**
  * The call, sent on to the Edge Function as the page sent it (its bytes, not

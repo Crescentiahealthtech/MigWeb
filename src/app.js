@@ -52,7 +52,7 @@ import { registerQuery, allPatients, masterDirectory, demographicsQuery, demogra
          patientKey } from './patients.js';
 import { Unsure, myPermissions, touchSession, pickerQuery, doctorPicker, profileQuery, userProfile,
          slotsDay, slotsQuery, doctorSlots, scheduleQuery, doctorSchedule } from './signin.js';
-import { RUNNER, viaRunner } from './runner.js';
+import { RUNNER, viaRunner, warmRunner } from './runner.js';
 
 const SHELL_EDGE_SECONDS = 20;
 const IDENTITY_MEMO_MS = 15 * 1000;            // a session looked up in Supabase, remembered by this instance
@@ -77,8 +77,10 @@ export const FLUSH_AFTER = {
   createOPReferral: ['Appointments', 'Patients', 'OP_Referrals'], respondToOPReferral: ['Appointments', 'OP_Encounters', 'OP_Referrals'],
   registerPatient: ['Patients'], updatePatientProfile: ['Patients'], saveUserProfile: ['Patients'],
   savePatientAllergies: ['Patients'],
-  saveNewAdmissionLedger: ['IP_Admissions', 'Patients'], processBedTransfer: ['IP_Admissions'],
-  processPatientDischarge: ['IP_Admissions'],
+  // The bed map and ward are answered from the copy (Day 4b): the beds too.
+  saveNewAdmissionLedger: { sheets: ['IP_Admissions', 'Patients', 'Master_Beds'], watch: true },
+  processBedTransfer: { sheets: ['IP_Admissions', 'Master_Beds'], watch: true },
+  processPatientDischarge: { sheets: ['IP_Admissions', 'Master_Beds'], watch: true },
   // Doctors' hours and leave: the booking slots are read from the copy.
   saveDoctorSchedule: ['Doctor_Schedules'], addScheduleException: ['Doctor_Schedule_Exceptions'],
   deleteScheduleException: ['Doctor_Schedule_Exceptions'], setDoctorDayBlocks: ['Doctor_Schedule_Exceptions'],
@@ -114,7 +116,49 @@ export const FLUSH_AFTER = {
   saveConsultTemplate: ['OP_Consult_Templates'], applyConsultTemplate: ['OP_Consult_Templates'],
   deleteConsultTemplate: ['OP_Consult_Templates'], saveRxBundle: ['Rx_Bundles'], noteRxBundleUsed: ['Rx_Bundles'],
   deleteRxBundle: ['Rx_Bundles'], deletePhraseTemplate: ['Clinical_Templates'], promotePhraseToClinic: ['Clinical_Templates'],
-  saveExamDefaults: ['Doctor_Exam_Defaults']
+  saveExamDefaults: ['Doctor_Exam_Defaults'],
+  // Hospital Billing (its lists and the billing ledger are answered from the
+  // copy from Day 4): a bill saved, paid, cancelled or its mode changed is on
+  // the ledger the screen reloads. A bill also closes the tests it billed
+  // (Investigation_Orders, the "orders to bill" list) and posts an
+  // inpatient's lines to the running bill (IP_Charges).
+  hb_saveInvoice: { sheets: ['Hospital_Invoices', 'Hospital_Invoice_Items', 'Investigation_Orders', 'IP_Charges', LEDGER, AUDIT], watch: true },
+  hb_recordPayment: { sheets: ['Hospital_Invoices', 'IP_Settlements', LEDGER, AUDIT], watch: true },
+  hb_cancelInvoice: { sheets: ['Hospital_Invoices', 'Investigation_Orders', LEDGER, AUDIT], watch: true },
+  hb_changePaymentMode: { sheets: ['Hospital_Invoices', 'IP_Advances', LEDGER, AUDIT], watch: true },
+  hb_dismissOrder: { sheets: ['Investigation_Orders'], watch: true },
+  // Pharmacy (its screens are answered from the copy from Day 5). A sale
+  // takes stock off batches in place and marks the rows it changed
+  // (Pharmacy.gs, sbTouch_), so only those and the bill's new rows are
+  // copied: the stock list reloaded after a bill must not offer what was
+  // just sold, and the pharmacist waits for nothing more. Writes that do not
+  // mark their rows compare the shelf's watched columns down the tab (watch).
+  processPharmacyBill: { sheets: ['Pharmacy_Invoices', 'Pharmacy_Invoice_Items', 'Pharmacy_Inventory', 'IP_Charges', LEDGER, AUDIT], window: 0 },
+  processPharmacyReturn: { sheets: ['Pharmacy_Invoices', 'Pharmacy_Invoice_Items', 'Pharmacy_Returns', 'Pharmacy_Return_Items',
+                                    'Pharmacy_Inventory', 'Pharmacy_Disposal_Log', 'IP_Charges', LEDGER, AUDIT], watch: true },
+  settleCreditBill: { sheets: ['Pharmacy_Invoices', 'IP_Charges', LEDGER, AUDIT], watch: true },
+  changePharmacyPayMode: { sheets: ['Pharmacy_Invoices', LEDGER, AUDIT], watch: true },
+  savePharmacyPurchase: { sheets: ['Pharmacy_Purchases', 'Pharmacy_Purchase_Items', 'Accounts_Payable', 'Pharmacy_Inventory',
+                                   'Pharmacy_Master', LEDGER, AUDIT], watch: true },
+  cancelPharmacyPurchase: { sheets: ['Pharmacy_Purchases', 'Pharmacy_Purchase_Items', 'Accounts_Payable', 'Pharmacy_Inventory',
+                                     'Pharmacy_Master', LEDGER, AUDIT], watch: true },
+  createSupplierReturn: { sheets: ['Supplier_Returns', 'Supplier_Return_Items', 'Pharmacy_Inventory', 'Pharmacy_Master', LEDGER, AUDIT], watch: true },
+  savePharmacyInventory: { sheets: ['Pharmacy_Inventory', 'Pharmacy_Master'], watch: true },
+  updatePharmacyStock: { sheets: ['Pharmacy_Inventory', 'Pharmacy_Master', AUDIT], watch: true },
+  deletePharmacyBatch: { sheets: ['Pharmacy_Inventory'], watch: true },
+  discardPharmacyStock: { sheets: ['Pharmacy_Inventory', 'Pharmacy_Disposal_Log', 'Pharmacy_Master', LEDGER, AUDIT], watch: true },
+  applyPackSizes: { sheets: ['Pharmacy_Inventory', 'Pharmacy_Master'], watch: true },
+  applyScheduleClassification: { sheets: ['Pharmacy_Inventory'], watch: true },
+  // The ward (Day 4b): an admission, a bed's status.
+  updateBedStatusInDB: { sheets: ['Master_Beds', 'IP_Admissions'], watch: true },
+  // IP charts (Day 4b).
+  saveIPDiabeticEntry: ['IP_Diabetic_Chart'], voidIPDiabeticEntry: { sheets: ['IP_Diabetic_Chart'], watch: true },
+  saveOTRecord: { sheets: ['IP_OT_Records'], watch: true },
+  saveMLCRecord: { sheets: ['MLC_Register', 'IP_Admissions'], watch: true },
+  // Mother & child, visiting consultants (Day 4b).
+  mcOpenAntenatal: ['ANC_Register'], mcCloseAntenatal: { sheets: ['ANC_Register'], watch: true }, mcRecordAntenatalVisit: ['ANC_Visits', 'ANC_Register'],
+  mcRecordImmunisation: ['Immunisation_Given'], mcMarkDoseNotGiven: ['Immunisation_Given'],
+  declareVisitingConsultant: ['Visiting_Sessions', 'Doctors'], endVisitingConsultant: { sheets: ['Visiting_Sessions'], watch: true }
 };
 
 /**
@@ -127,20 +171,10 @@ export const FLUSH_AFTER = {
  * sync would get there within a minute anyway.
  */
 export const FLUSH_SOON = {
-  processPharmacyBill: ['Pharmacy_Invoices', 'IP_Charges', LEDGER, 'Pharmacy_Inventory', AUDIT],
-  processPharmacyReturn: ['Pharmacy_Invoices', 'IP_Charges', LEDGER, 'Pharmacy_Inventory', AUDIT],
-  settleCreditBill: { sheets: ['Pharmacy_Invoices', 'IP_Charges', LEDGER, AUDIT], watch: true },
-  changePharmacyPayMode: { sheets: ['Pharmacy_Invoices', LEDGER], watch: true },
-  savePharmacyPurchase: ['Pharmacy_Purchases', 'Accounts_Payable', 'Pharmacy_Inventory', LEDGER],
-  cancelPharmacyPurchase: { sheets: ['Pharmacy_Purchases', 'Accounts_Payable', 'Pharmacy_Inventory', LEDGER], watch: true },
   collectAndBillLabSample: ['LAB_BILLING', 'IP_Charges', LEDGER, AUDIT], generateLabBill: ['LAB_BILLING', 'IP_Charges', LEDGER, AUDIT],
   labCancelBill: { sheets: ['LAB_BILLING', 'IP_Charges', LEDGER, AUDIT], watch: true },
   labCancelPendingOrder: { sheets: ['LAB_BILLING'], watch: true },
   settleLabBillBalance: { sheets: ['LAB_BILLING', LEDGER, AUDIT], watch: true },
-  hb_saveInvoice: ['Hospital_Invoices', 'IP_Charges', LEDGER, AUDIT],
-  hb_recordPayment: { sheets: ['Hospital_Invoices', 'IP_Settlements', LEDGER, AUDIT], watch: true },
-  hb_cancelInvoice: { sheets: ['Hospital_Invoices', LEDGER, AUDIT], watch: true },
-  hb_changePaymentMode: { sheets: ['Hospital_Invoices', 'IP_Advances', LEDGER, AUDIT], watch: true },
   // Results entered, verified or flagged at the lab, and reports from outside
   // labs: IP Notes' investigations panel.
   saveLabResultsDraft: ['LAB_RESULTS', 'LAB_ORDERS'], submitLabResults: ['LAB_RESULTS', 'LAB_ORDERS'],
@@ -201,7 +235,10 @@ export async function rpc(request, env, ctx, supabase) {
         const at = r.headers.get('X-CresRx-Refresh');
         if (at !== null) refreshSoon(bytes, Number(at), env, ctx);
         return new Response(r.body, { status: 200, headers: secure({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
-          'X-CresRx-Source': 'supabase', 'X-CresRx-Via': 'app code on Supabase', 'X-CresRx-Runs': r.headers.get('X-CresRx-Runs') || '' }) });
+          'X-CresRx-Source': 'supabase', 'X-CresRx-Via': 'app code on Supabase', 'X-CresRx-Runs': r.headers.get('X-CresRx-Runs') || '',
+          // Where the time went inside the Edge Function (the badge shows it).
+          'X-CresRx-Ms': r.headers.get('X-CresRx-Ms') || '', 'X-CresRx-Load-Ms': r.headers.get('X-CresRx-Load-Ms') || '',
+          'X-CresRx-Reused': r.headers.get('X-CresRx-Reused') || '' }) });
       }
       why = r.why;
     } else why = 'switched off (EDGE_OFF)';
@@ -541,18 +578,33 @@ function pageBuild(request) {
  * person on a new build gets it from Apps Script, which stores it.
  */
 async function bundle([name], env, ctx, supabase, request) {
-  const build = pageBuild(request);
   const n = String(name || '').trim();
+  // The page's build (its cookie), else the build deployed now (the build
+  // check Apps Script stores): a page open in a tab longer than its cookie
+  // lives still gets its screens from here. Apps Script serves the deployed
+  // build's markup whatever build the page is, so it is the same answer.
+  const build = pageBuild(request) || await deployedBuild(supabase);
   if (!build) throw new Unsure('the page\'s build is not known');
   if (!/^[a-z][a-z0-9-]{0,39}$/.test(n)) throw new Unsure('an unusual bundle name');
+  // The screen opening will read these tabs next: the Edge Function loads them now.
+  if (edgeOn(env, 'runner')) later(ctx, 'warm ' + n, warmRunner(env, n));
   const hit = await stored('bundle:' + build + ':' + n, BUNDLE_FRESH_MS,
     () => appsScriptQuietly(env, 'crescGetBundle', [n, build]), ctx, supabase, plain);
   if (hit) return hit;
   return forward(env, new TextEncoder().encode(JSON.stringify({ fn: 'crescGetBundle', args: [n, build] })), 'not stored yet');
 }
 
+/** The build deployed now, as Apps Script last stored it (getAppBuild), or ''. */
+async function deployedBuild(supabase) {
+  try {
+    const snap = splitSnapshot(await supabase('snapshot_get', { key: 'build' }, true));
+    const m = snap && /"build"\s*:\s*"([0-9a-f]{6,32})"/.exec(snap.dataText);
+    return m ? m[1] : '';
+  } catch (e) { return ''; }
+}
+
 /** The calls the Worker answers itself, by the name the page calls them. */
-const EDGE = {
+export const EDGE = {
   fetchDailyLedgerScoped: edgeLedger,
   getDashboardData: dashboard,
   // getAllPatients(sessionToken) — CodeMV.gs
@@ -682,7 +734,7 @@ export async function shell(request, env, ctx) {
   // The build of this page (Apps Script stamps it in), so the screen bundles
   // it asks for next are the ones of the same build (crescGetBundle above).
   const b = /window\.CRESC_BUILD\s*=\s*'([0-9a-f]{6,32})'/.exec(html);
-  if (b) res.headers.append('Set-Cookie', 'cresrx_build=' + b[1] + '; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=86400');
+  if (b) res.headers.append('Set-Cookie', 'cresrx_build=' + b[1] + '; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=2592000');
   return res;
 }
 
@@ -705,8 +757,15 @@ export const MIGRATION_SCREENS = [
           'getExpenseRegister', 'getTaxSummary', 'getAuditLog', 'getInsuranceClaims', 'getOpenAdmissions', 'getRunningTab'], day: 'Day 3' },
   { label: 'IP Notes: patient list, opening a patient, timeline, care team, investigations, printed notes', fns: ['getActiveIPAdmissionsForNotes', 'getIPNotesBundle', 'getIPTimeline', 'getIPLabResults', 'getIPNotesPrintHtml'], day: 'Day 3' },
   { label: 'OP consultation: composer, last visit, allergies, templates, drug and test lists, safety check, doses, printed prescription', fns: ['getComposerContext', 'getLastVisitRecall', 'getPatientAllergies', 'fetchOPDrugMaster', 'checkRxSafety', 'suggestPaediatricDose', 'getOPPrescriptionHtml'], day: 'Day 3' },
-  { label: 'Billing ledger and Hospital Billing lists', fns: ['hb_getInvoices'], day: 'Day 4' },
-  { label: 'Pharmacy stock, sales and GST reports', fns: [], day: 'Day 5' },
+  { label: 'Hospital Billing: patient lookup, the billing ledger, reprints, orders to bill, IP bill status, draft bill, advance receipts; the lab\'s billing ledger; the IP ledger (the app\'s own code on Supabase)',
+    fns: ['hb_getBootstrap', 'hb_getPatientContext', 'hb_getInvoices', 'hb_getInvoice', 'hb_listOpenOrders', 'getIpBillingStatus',
+          'getIpDraftBillHtml', 'getIpAdvanceReceipt', 'getLabLedger', 'getIPHistory', 'getAdmissionDetail'], day: 'Day 4' },
+  { label: 'Ward, bed map, IP charts and records, mother & child, MLC, outside labs, stock alerts, availability grid (the app\'s own code on Supabase)',
+    fns: ['getActiveIPWard', 'getWardBedBoard', 'getBedStatuses', 'getIPDiabeticChart', 'getIPRecordsLedger', 'mcGetAntenatal', 'getMLCRegister',
+          'getPatientLabResults', 'getStockAlerts', 'getDoctorAvailabilityGrid'], day: 'Day 4b' },
+  { label: 'Pharmacy: billing desk, dashboard, returns, stock, purchases, supplier returns, sales, GST and Schedule H reports (the app\'s own code on Supabase)',
+    fns: ['fetchBillableStock', 'fetchPharmacyInventory', 'getPatientBillingContext', 'getPharmacyDashboard', 'getPharmacyStockList',
+          'getPharmacySalesAnalysis', 'getPharmacyGstSummary', 'getPharmacyPurchases', 'getSupplierReturns'], day: 'Day 5' },
   { label: 'Lab queues, IP ward roster and running bill, admitted patients\' timelines', fns: [], day: 'Day 6' },
   { label: 'Sign-in itself (password, authenticator code), account admin, label printing — Apps Script', fns: [], day: 'stays' },
   { label: 'All writes (registrations, bookings, bills, consultations) — stay on Apps Script until the server stage', fns: [], day: 'later' }

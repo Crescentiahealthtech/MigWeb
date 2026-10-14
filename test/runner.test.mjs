@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../src/worker.js';
 import { RUNNER } from '../src/runner.js';
-import { FLUSH_AFTER, FLUSH_SOON } from '../src/app.js';
+import { FLUSH_AFTER, FLUSH_SOON, EDGE } from '../src/app.js';
 
 const EXEC = 'https://script.google.com/macros/s/AKfyTEST/exec';
 const FN_URL = 'https://x.supabase.co/functions/v1/cresrx-reads';
@@ -70,16 +70,17 @@ test('EDGE_OFF=runner, EDGE_OFF=<name>, EDGE_OFF=all and no key leave the reads 
   }
 });
 
-test('writes never go to the Edge Function; each Day 3 write copies what it changed before answering', async () => {
-  for (const fn of ['saveOPEncounterScoped', 'saveIPNote', 'recordLedgerEntry', 'settleDischarge', 'addIPCrossConsult', 'saveConsultTemplate']) {
+test('writes never go to the Edge Function; each Day 3 and Day 4 write copies what it changed before answering', async () => {
+  for (const fn of ['saveOPEncounterScoped', 'saveIPNote', 'recordLedgerEntry', 'settleDischarge', 'addIPCrossConsult', 'saveConsultTemplate',
+                    'hb_saveInvoice', 'hb_recordPayment', 'hb_cancelInvoice', 'hb_changePaymentMode', 'hb_dismissOrder']) {
     assert.ok(!RUNNER.has(fn), fn);
     const log = network(() => { throw new Error('a write reached the Edge Function'); });
     await worker.fetch(call(fn, [{}, 'TOKEN']), env(), ctx);
     const spec = FLUSH_AFTER[fn];
     assert.deepEqual(log.apps[0].flush, Array.isArray(spec) ? spec : spec.sheets, fn);
   }
-  // Every served name is a read (get…, list…, fetch…, check…, a dose worked out, …Eligibility).
-  for (const fn of RUNNER) assert.match(fn, /^(get|list|fetch|check|buildTaperPlan$|suggestPaediatricDose$)|Eligibility$/, fn);
+  // Every served name is a read (get…, list…, fetch…, check…, search…, preview…, suggest…, a print, …Eligibility).
+  for (const fn of RUNNER) assert.match(fn, /^(hb_|mc|ds_)?(get|Get|list|fetch|check|search|preview|suggest)|^mtPrint|^buildTaperPlan$|Eligibility$/, fn);
 });
 
 test('a bill made at a counter not moved yet is copied just after its answer, in the background', async () => {
@@ -93,17 +94,17 @@ test('a bill made at a counter not moved yet is copied just after its answer, in
     return inner(url, init);
   };
   const waits = [];
-  const r = await worker.fetch(call('processPharmacyBill', [{ items: [] }, 'TOKEN']), env(), { waitUntil: (p) => waits.push(p) });
-  assert.deepEqual((await r.json()).v, { from: 'apps-script', fn: 'processPharmacyBill' });          // answered, the copy still on its way
+  const r = await worker.fetch(call('collectAndBillLabSample', [{ items: [] }, 'TOKEN']), env(), { waitUntil: (p) => waits.push(p) });
+  assert.deepEqual((await r.json()).v, { from: 'apps-script', fn: 'collectAndBillLabSample' });      // answered, the copy still on its way
   assert.equal(waits.length, 1);
   release();
   await Promise.all(waits);
-  assert.deepEqual(log.apps, [{ fn: 'processPharmacyBill', args: [{ items: [] }, 'TOKEN'] },
-                              { fn: 'getAppBuild', args: [], flush: FLUSH_SOON.processPharmacyBill }]);
-  // An old credit bill settled: its watched columns are compared too.
-  await worker.fetch(call('settleCreditBill', [{ invoiceNo: 'PH-1' }, 'TOKEN']), env(), { waitUntil: (p) => waits.push(p) });
+  assert.deepEqual(log.apps, [{ fn: 'collectAndBillLabSample', args: [{ items: [] }, 'TOKEN'] },
+                              { fn: 'getAppBuild', args: [], flush: FLUSH_SOON.collectAndBillLabSample }]);
+  // An old lab bill settled: its watched columns are compared too.
+  await worker.fetch(call('settleLabBillBalance', [{ billId: 'LB-1' }, 'TOKEN']), env(), { waitUntil: (p) => waits.push(p) });
   await Promise.all(waits);
-  assert.deepEqual(log.apps.at(-1), { fn: 'getAppBuild', args: [], flush: FLUSH_SOON.settleCreditBill.sheets, flushOpts: { watch: true } });
+  assert.deepEqual(log.apps.at(-1), { fn: 'getAppBuild', args: [], flush: FLUSH_SOON.settleLabBillBalance.sheets, flushOpts: { watch: true } });
   // Never both: a call is flushed before its answer or after it.
   for (const fn of Object.keys(FLUSH_SOON)) assert.ok(!FLUSH_AFTER[fn] && !RUNNER.has(fn), fn);
 });
@@ -123,4 +124,16 @@ test('a session stored over ten minutes ago is re-checked by Apps Script after t
   await worker.fetch(call('getIPTimeline', ['IP-1', 'TOKEN-NEW']), env(), c);
   await Promise.all(waits);
   assert.equal(fresh.apps.length, 0);                                  // a recent session: nothing asked
+});
+
+test('the rollback: EDGE_OFF=all sends every moved read back to Apps Script, and nothing reaches Supabase', async () => {
+  // network() throws on any other address: a call to Supabase's REST API or
+  // to the Edge Function would fail this test.
+  for (const fn of [...RUNNER, ...Object.keys(EDGE)]) {
+    const log = network(() => { throw new Error(fn + ' reached the Edge Function'); });
+    const r = await worker.fetch(call(fn, ['X', 'TOKEN']), env({ EDGE_OFF: 'all' }), ctx);
+    assert.deepEqual((await r.json()).v, { from: 'apps-script', fn }, fn);
+    assert.equal(r.headers.get('x-cresrx-source'), 'apps-script', fn);
+    assert.equal(log.edge.length, 0, fn);
+  }
 });

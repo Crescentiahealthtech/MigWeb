@@ -79,6 +79,7 @@ function network({ stored = {}, snapshots = {} } = {}) {
       if (body.fn === 'getEdgeIdentity') return Response.json({ ok: true, v: SESS[String(body.args[0]).replace(/\d+$/, '')] || { success: false } });
       return Response.json({ ok: true, v: { from: 'apps-script', fn: body.fn, args: body.args } });
     }
+    if (url.includes('/functions/v1/cresrx-reads')) { (log.edge = log.edge || []).push(body); return Response.json({ tabs: 3, loaded: 3, reused: 0, ms: 9 }); }
     const fn = url.split('/rpc/')[1];
     log.sb.push(fn);
     const j = (v) => new Response(JSON.stringify(v), { headers: { 'content-type': 'application/json' } });
@@ -189,8 +190,15 @@ test('a screen bundle comes from Supabase for the page\'s own build; the first o
   r = await call('crescGetBundle', ['billing'], ctx, { headers });     // not stored yet
   assert.equal(r.source, 'apps-script');
   assert.deepEqual(log.apps.at(-1), { fn: 'crescGetBundle', args: ['billing', 'a1b2c3d4e5f6'] });
-  r = await call('crescGetBundle', ['patients'], ctx);                  // a page without the cookie: as before
+  r = await call('crescGetBundle', ['patients'], ctx);                  // a page without the cookie, no build stored: as before
   assert.deepEqual(log.apps.at(-1), { fn: 'crescGetBundle', args: ['patients'] });
+  // A page open longer than its cookie lives: the build deployed now (the stored build check).
+  ({ log, ctx, settle } = network({ snapshots: { 'bundle:a1b2c3d4e5f6:patients': { data, age: 1000 },
+                                                 build: { data: { success: true, build: 'a1b2c3d4e5f6', url: '' }, age: 1000 } } }));
+  r = await call('crescGetBundle', ['patients'], ctx);
+  assert.equal(r.source, 'supabase');
+  assert.deepEqual(r.v, data);
+  assert.deepEqual(log.apps, []);
   ({ log, ctx, settle } = network({ snapshots: { 'bundle:a1b2c3d4e5f6:patients': { data, age: 4 * 60000 } } }));
   assert.equal((await call('crescGetBundle', ['patients'], ctx, { headers })).source, 'supabase');
   await settle();
@@ -255,4 +263,23 @@ test('saving hours, leave or an account copies those sheets at once', async () =
     await call(fn, [{}, 'T'], ctx);
     assert.deepEqual(log.apps.at(-1).flush, sheets, fn);
   }
+});
+
+test('a screen opening asks the Edge Function to load the tabs its reads need, once a minute at most', async () => {
+  const data = { success: true, name: 'pharmacy', html: '<div>p</div>', message: '' };
+  const { log, ctx, settle } = network({ snapshots: { 'bundle:a1b2c3d4e5f6:pharmacy': { data, age: 1000 } } });
+  const headers = { cookie: 'cresrx_build=a1b2c3d4e5f6' };
+  assert.equal((await call('crescGetBundle', ['pharmacy'], ctx, { headers })).source, 'supabase');
+  await settle();
+  assert.equal(log.edge.length, 1);
+  assert.equal(log.edge[0].fn, '__warm');
+  assert.ok(log.edge[0].args.includes('fetchBillableStock') && log.edge[0].args.includes('getPharmacyDashboard'));
+  await call('crescGetBundle', ['pharmacy'], ctx, { headers });   // again within the minute: not asked again
+  await settle();
+  assert.equal(log.edge.length, 1);
+  // Switched off with the reads: no warm-up either.
+  const off = network({ snapshots: { 'bundle:a1b2c3d4e5f6:billing': { data, age: 1000 } } });
+  await call('crescGetBundle', ['billing'], off.ctx, { headers, e: env({ EDGE_OFF: 'runner' }) });
+  await off.settle();
+  assert.equal((off.log.edge || []).length, 0);
 });
