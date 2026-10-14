@@ -67,6 +67,7 @@ const EXEC_RE = /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/;
  * the copy show the change at once. Each lists the sheets it can change.
  */
 const APPT = ['Appointments', 'Patients'];
+const LEDGER = 'Finance_Master_Ledger', AUDIT = 'Audit_Event_Ledger';
 export const FLUSH_AFTER = {
   updateAppointmentStatus: APPT, setAppointmentTime: APPT, barcodeUpdateAppointment: APPT, submitNewAppointment: APPT,
   bookAppointmentScoped: APPT, portalBookAppointment: APPT, portalCancelAppointment: APPT,
@@ -85,24 +86,64 @@ export const FLUSH_AFTER = {
   crescSaveUserAccess: ['Users'], crescSetAccountActive: ['Users'], crescAdminResetPassword: ['Users'],
   crescChangePassword: ['Users'], crescCreateStaffAccount: ['Users', 'Doctors'],
   // Finance Hub (its screens are answered from the copy: src/runner.js).
-  recordLedgerEntry: ['Finance_Master_Ledger'], recordBankTransfer: ['Finance_Master_Ledger'],
-  moveShiftCashOut: ['Finance_Master_Ledger', 'Shift_Registers'], openShift: ['Shift_Registers', 'Finance_Master_Ledger'],
-  closeShift: ['Shift_Registers', 'Finance_Master_Ledger'],
-  recordPayable: ['Accounts_Payable', 'Finance_Master_Ledger'], payPayable: ['Accounts_Payable', 'Finance_Master_Ledger'],
-  createManualClaim: ['Insurance_Claims_Ledger'], updateClaim: ['Insurance_Claims_Ledger'],
-  settleClaim: ['Insurance_Claims_Ledger', 'IP_Settlements', 'Finance_Master_Ledger'],
-  addIpCharge: ['IP_Charges'], collectIpAdvance: ['IP_Advances', 'Finance_Master_Ledger'],
-  addIpVisit: ['IP_Visits'], saveDischargeDraft: ['IP_Discharge_Drafts'],
-  // A bill settled weeks after it was raised is edited in place: its sheet's
-  // watched columns are read too (Supabase_Mirror.gs, SB_CFG.WATCH).
-  settleReceivableBill: { sheets: ['Pharmacy_Invoices', 'LAB_BILLING', 'Hospital_Invoices', 'LAB_SETTLEMENTS', 'Finance_Master_Ledger'], watch: true },
-  settleDischarge: ['IP_Charges', 'IP_Advances', 'IP_Settlements', 'Finance_Master_Ledger', 'Hospital_Invoices', 'IP_Admissions',
-                    'IP_Discharge_Drafts', 'Insurance_Claims_Ledger'],
-  // IP Notes.
-  saveIPNote: ['IP_Timeline_DB', 'IP_Pharmacy_Queue'], addIPCrossConsult: ['IP_Care_Team'], removeIPCrossConsult: ['IP_Care_Team'],
-  updateIPDiagnosis: ['IP_Admissions', 'IP_CaseSheets_DB'],
-  // OP consultation: templates and bundles.
-  saveConsultTemplate: ['OP_Consult_Templates'], saveRxBundle: ['Rx_Bundles'], noteRxBundleUsed: ['Rx_Bundles']
+  // Every money write also leaves an entry in Audit_Event_Ledger (the audit
+  // tab). `watch`: the write edits rows in place, maybe weeks old, so the
+  // sheets' watched columns are compared too (Supabase_Mirror.gs SB_CFG.WATCH).
+  recordLedgerEntry: [LEDGER, AUDIT], recordBankTransfer: [LEDGER, AUDIT],
+  moveShiftCashOut: { sheets: [LEDGER, 'Shift_Registers', AUDIT], watch: true },
+  openShift: ['Shift_Registers', LEDGER, AUDIT], closeShift: { sheets: ['Shift_Registers', LEDGER, AUDIT], watch: true },
+  lockFinancialPeriod: { sheets: [LEDGER, AUDIT], watch: true },
+  recordPayable: ['Accounts_Payable', LEDGER, AUDIT], payPayable: { sheets: ['Accounts_Payable', LEDGER, AUDIT], watch: true },
+  createManualClaim: ['Insurance_Claims_Ledger', AUDIT], updateClaim: { sheets: ['Insurance_Claims_Ledger', AUDIT], watch: true },
+  settleClaim: { sheets: ['Insurance_Claims_Ledger', 'IP_Settlements', LEDGER, AUDIT], watch: true },
+  addIpCharge: ['IP_Charges', AUDIT], addIpCharges: ['IP_Charges', AUDIT], billChargeToIp: ['IP_Charges', AUDIT],
+  editIpCharge: { sheets: ['IP_Charges', AUDIT], watch: true }, voidIpCharge: { sheets: ['IP_Charges', AUDIT], watch: true },
+  markIpChargePaidAtCounter: { sheets: ['IP_Charges', AUDIT], watch: true },
+  collectIpAdvance: ['IP_Advances', LEDGER, AUDIT],
+  addIpVisit: ['IP_Visits'], saveDischargeDraft: { sheets: ['IP_Discharge_Drafts'], watch: true },
+  // A bill settled weeks after it was raised is edited in place.
+  settleReceivableBill: { sheets: ['Pharmacy_Invoices', 'LAB_BILLING', 'Hospital_Invoices', 'LAB_SETTLEMENTS', LEDGER, AUDIT], watch: true },
+  settleDischarge: { sheets: ['IP_Charges', 'IP_Advances', 'IP_Settlements', LEDGER, 'Hospital_Invoices', 'IP_Admissions',
+                              'IP_Discharge_Drafts', 'Insurance_Claims_Ledger', AUDIT], watch: true },
+  // IP Notes: notes, ward medicines, the care team, the diagnosis.
+  saveIPNote: ['IP_Timeline_DB', 'IP_Pharmacy_Queue'], updateIPMedAction: { sheets: ['IP_Pharmacy_Queue'], watch: true },
+  addIPCrossConsult: ['IP_Care_Team'], removeIPCrossConsult: { sheets: ['IP_Care_Team'], watch: true },
+  addIPCareTeamMember: ['IP_Care_Team'], removeIPCareTeamMember: { sheets: ['IP_Care_Team'], watch: true },
+  updateIPDiagnosis: { sheets: ['IP_Admissions', 'IP_CaseSheets_DB'], watch: true },
+  // OP consultation: templates, bundles, phrases, examination defaults.
+  saveConsultTemplate: ['OP_Consult_Templates'], applyConsultTemplate: ['OP_Consult_Templates'],
+  deleteConsultTemplate: ['OP_Consult_Templates'], saveRxBundle: ['Rx_Bundles'], noteRxBundleUsed: ['Rx_Bundles'],
+  deleteRxBundle: ['Rx_Bundles'], deletePhraseTemplate: ['Clinical_Templates'], promotePhraseToClinic: ['Clinical_Templates'],
+  saveExamDefaults: ['Doctor_Exam_Defaults']
+};
+
+/**
+ * Writes made on screens not moved yet (pharmacy, lab and hospital billing,
+ * the ward's case sheet and discharge summary) that change what the screens
+ * answered from the copy show — a counter's cash drawer, the bills owed, an
+ * inpatient's running bill and notes. Their sheets are copied straight after
+ * the answer has gone back (in the background: the person does not wait for
+ * it), so the drawer or the bill opened next shows them; the every-minute
+ * sync would get there within a minute anyway.
+ */
+export const FLUSH_SOON = {
+  processPharmacyBill: ['Pharmacy_Invoices', 'IP_Charges', LEDGER, 'Pharmacy_Inventory', AUDIT],
+  processPharmacyReturn: ['Pharmacy_Invoices', 'IP_Charges', LEDGER, 'Pharmacy_Inventory', AUDIT],
+  settleCreditBill: { sheets: ['Pharmacy_Invoices', 'IP_Charges', LEDGER, AUDIT], watch: true },
+  changePharmacyPayMode: { sheets: ['Pharmacy_Invoices', LEDGER], watch: true },
+  savePharmacyPurchase: ['Pharmacy_Purchases', 'Accounts_Payable', 'Pharmacy_Inventory', LEDGER],
+  cancelPharmacyPurchase: { sheets: ['Pharmacy_Purchases', 'Accounts_Payable', 'Pharmacy_Inventory', LEDGER], watch: true },
+  collectAndBillLabSample: ['LAB_BILLING', 'IP_Charges', LEDGER, AUDIT], generateLabBill: ['LAB_BILLING', 'IP_Charges', LEDGER, AUDIT],
+  labCancelBill: { sheets: ['LAB_BILLING', 'IP_Charges', LEDGER, AUDIT], watch: true },
+  labCancelPendingOrder: { sheets: ['LAB_BILLING'], watch: true },
+  settleLabBillBalance: { sheets: ['LAB_BILLING', LEDGER, AUDIT], watch: true },
+  hb_saveInvoice: ['Hospital_Invoices', 'IP_Charges', LEDGER, AUDIT],
+  hb_recordPayment: { sheets: ['Hospital_Invoices', 'IP_Settlements', LEDGER, AUDIT], watch: true },
+  hb_cancelInvoice: { sheets: ['Hospital_Invoices', LEDGER, AUDIT], watch: true },
+  hb_changePaymentMode: { sheets: ['Hospital_Invoices', 'IP_Advances', LEDGER, AUDIT], watch: true },
+  saveIPCasesheet: ['IP_CaseSheets_DB', 'IP_Timeline_DB', 'IP_Pharmacy_Queue', 'Clinical_Templates'],
+  amendIPCasesheet: { sheets: ['IP_CaseSheets_DB', 'IP_Timeline_DB', 'IP_Pharmacy_Queue'], watch: true },
+  ds_sign: ['DS_Summaries', 'IP_Timeline_DB']
 };
 
 export const execUrl = (env) => String((env && (env.APP_EXEC_URL || env.APP_EXEC_URL_DEFAULT)) || '').trim();
@@ -158,7 +199,22 @@ export async function rpc(request, env, ctx, supabase) {
     } else why = 'switched off (EDGE_OFF)';
   }
   if (fn === 'crescLogSignOut') await forget(bytes);
-  return forward(env, FLUSH_AFTER[fn] ? withFlush(bytes, FLUSH_AFTER[fn]) : bytes, why);
+  const answer = await forward(env, FLUSH_AFTER[fn] ? withFlush(bytes, FLUSH_AFTER[fn]) : bytes, why);
+  if (FLUSH_SOON[fn] && ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(flushSoon(env, FLUSH_SOON[fn]));
+  return answer;
+}
+
+/**
+ * Asks Apps Script to copy these sheets now (FLUSH_SOON), on a call of its
+ * own after the write's answer has gone back: the build check, which needs no
+ * session and changes nothing, carrying the flush.
+ */
+const FLUSH_CARRIER = new TextEncoder().encode('{"fn":"getAppBuild","args":[]}');
+async function flushSoon(env, spec) {
+  try {
+    const r = await fetch(execUrl(env), { method: 'POST', body: withFlush(FLUSH_CARRIER, spec), headers: { 'Content-Type': 'application/json' }, redirect: 'follow' });
+    if (r.body) await r.body.cancel();
+  } catch (e) { /* the every-minute sync copies it */ }
 }
 
 /** The answer "null" from the Worker itself (an EDGE handler's null means "ask Apps Script"). */

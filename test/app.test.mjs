@@ -100,7 +100,7 @@ test('a status change or booking asks Apps Script to copy the ledger\'s sheets b
   for (const [fn, sheets] of [['updateAppointmentStatus', ['Appointments', 'Patients']], ['bookAppointmentScoped', ['Appointments', 'Patients']],
                               ['barcodeUpdateAppointment', ['Appointments', 'Patients']], ['registerPatient', ['Patients']],
                               ['processPatientDischarge', ['IP_Admissions']], ['saveIPNote', ['IP_Timeline_DB', 'IP_Pharmacy_Queue']],
-                              ['recordLedgerEntry', ['Finance_Master_Ledger']]]) {
+                              ['recordLedgerEntry', ['Finance_Master_Ledger', 'Audit_Event_Ledger']]]) {
     await worker.fetch(call(fn, ['A1', 'Arrived', 'ADMIN']), env(), ctx);
     assert.deepEqual(log.apps.at(-1), { fn, args: ['A1', 'Arrived', 'ADMIN'], flush: sheets });
   }

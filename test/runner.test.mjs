@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../src/worker.js';
 import { RUNNER } from '../src/runner.js';
-import { FLUSH_AFTER } from '../src/app.js';
+import { FLUSH_AFTER, FLUSH_SOON } from '../src/app.js';
 
 const EXEC = 'https://script.google.com/macros/s/AKfyTEST/exec';
 const FN_URL = 'https://x.supabase.co/functions/v1/cresrx-reads';
@@ -80,4 +80,30 @@ test('writes never go to the Edge Function; each Day 3 write copies what it chan
   }
   // Every served name is a read (get…, list…, fetch…, check…, …Eligibility).
   for (const fn of RUNNER) assert.match(fn, /^(get|list|fetch|check)|Eligibility$/, fn);
+});
+
+test('a bill made at a counter not moved yet is copied just after its answer, in the background', async () => {
+  const log = network(() => { throw new Error('a write reached the Edge Function'); });
+  // The copy's call is held until released: the bill's answer must not wait for it.
+  let release; const held = new Promise((r) => { release = r; });
+  const inner = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const b = JSON.parse(new TextDecoder().decode(init.body));
+    if (b.fn === 'getAppBuild') { const out = await inner(url, init); await held; return out; }
+    return inner(url, init);
+  };
+  const waits = [];
+  const r = await worker.fetch(call('processPharmacyBill', [{ items: [] }, 'TOKEN']), env(), { waitUntil: (p) => waits.push(p) });
+  assert.deepEqual((await r.json()).v, { from: 'apps-script', fn: 'processPharmacyBill' });          // answered, the copy still on its way
+  assert.equal(waits.length, 1);
+  release();
+  await Promise.all(waits);
+  assert.deepEqual(log.apps, [{ fn: 'processPharmacyBill', args: [{ items: [] }, 'TOKEN'] },
+                              { fn: 'getAppBuild', args: [], flush: FLUSH_SOON.processPharmacyBill }]);
+  // An old credit bill settled: its watched columns are compared too.
+  await worker.fetch(call('settleCreditBill', [{ invoiceNo: 'PH-1' }, 'TOKEN']), env(), { waitUntil: (p) => waits.push(p) });
+  await Promise.all(waits);
+  assert.deepEqual(log.apps.at(-1), { fn: 'getAppBuild', args: [], flush: FLUSH_SOON.settleCreditBill.sheets, flushOpts: { watch: true } });
+  // Never both: a call is flushed before its answer or after it.
+  for (const fn of Object.keys(FLUSH_SOON)) assert.ok(!FLUSH_AFTER[fn] && !RUNNER.has(fn), fn);
 });
