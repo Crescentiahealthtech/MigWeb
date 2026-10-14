@@ -22,11 +22,11 @@ export const RUNNER = new Set([
   'getOpenAdmissions', 'getRunningTab', 'getIpVisits', 'getPharmacyLedger',
   // IP Notes
   'getActiveIPAdmissionsForNotes', 'getIPNotesBundle', 'getIPTimeline', 'getIPNotePermissions', 'getClinicalContext',
-  'getIPLabResults', 'getIPCareTeamPanel', 'getIPTeamRoles', 'getIPNotesLabCatalog',
+  'getIPLabResults', 'getIPCareTeamPanel', 'getIPTeamRoles', 'getIPNotesLabCatalog', 'getIPNotesPrintHtml',
   // OP consultation
   'getComposerContext', 'getPatientAllergies', 'getLastVisitRecall', 'listConsultTemplates', 'getAssistForDiagnosis',
   'getOPDOrderableTests', 'fetchOPDrugMaster', 'fetchUniversalDrugs', 'fetchPharmacyMasterForIP', 'checkRxSafety',
-  'mcCardEligibility'
+  'mcCardEligibility', 'buildTaperPlan', 'suggestPaediatricDose', 'getOPPrescriptionHtml', 'getOPReferralLetter'
 ]);
 
 /**

@@ -74,7 +74,7 @@ export const FLUSH_AFTER = {
   // Every row the save edits in place is marked (OP_Database_Engine.gs), so
   // only those and the new rows are copied: the doctor waits for this.
   saveOPEncounterScoped: { sheets: ['Appointments', 'OP_Encounters', 'Clinical_Templates'], window: 0 },
-  createOPReferral: APPT, respondToOPReferral: ['Appointments', 'OP_Encounters'],
+  createOPReferral: ['Appointments', 'Patients', 'OP_Referrals'], respondToOPReferral: ['Appointments', 'OP_Encounters', 'OP_Referrals'],
   registerPatient: ['Patients'], updatePatientProfile: ['Patients'], saveUserProfile: ['Patients'],
   savePatientAllergies: ['Patients'],
   saveNewAdmissionLedger: ['IP_Admissions', 'Patients'], processBedTransfer: ['IP_Admissions'],
@@ -141,6 +141,12 @@ export const FLUSH_SOON = {
   hb_recordPayment: { sheets: ['Hospital_Invoices', 'IP_Settlements', LEDGER, AUDIT], watch: true },
   hb_cancelInvoice: { sheets: ['Hospital_Invoices', LEDGER, AUDIT], watch: true },
   hb_changePaymentMode: { sheets: ['Hospital_Invoices', 'IP_Advances', LEDGER, AUDIT], watch: true },
+  // Results entered, verified or flagged at the lab, and reports from outside
+  // labs: IP Notes' investigations panel.
+  saveLabResultsDraft: ['LAB_RESULTS', 'LAB_ORDERS'], submitLabResults: ['LAB_RESULTS', 'LAB_ORDERS'],
+  verifyLabResults: { sheets: ['LAB_RESULTS', 'LAB_ORDERS'], watch: true }, labAcknowledgeCritical: { sheets: ['LAB_RESULTS'], watch: true },
+  saveExternalLabResult: ['External_Lab_Results', 'Investigation_Orders', 'LAB_ORDERS'],
+  voidExternalLabResult: { sheets: ['External_Lab_Results', 'Investigation_Orders', 'LAB_ORDERS'], watch: true },
   saveIPCasesheet: ['IP_CaseSheets_DB', 'IP_Timeline_DB', 'IP_Pharmacy_Queue', 'Clinical_Templates'],
   amendIPCasesheet: { sheets: ['IP_CaseSheets_DB', 'IP_Timeline_DB', 'IP_Pharmacy_Queue'], watch: true },
   ds_sign: ['DS_Summaries', 'IP_Timeline_DB']
@@ -677,8 +683,8 @@ export const MIGRATION_SCREENS = [
   { label: 'Finance Hub: Master Ledger, dashboard, receivables, drawers, payables, expenses, GST, audit, insurance, IP charges and discharge (the app\'s own code on Supabase)',
     fns: ['getAccountsDashboard', 'getFinanceDashboard', 'getReceivables', 'getAllDrawerStates', 'getShiftState', 'getPayables',
           'getExpenseRegister', 'getTaxSummary', 'getAuditLog', 'getInsuranceClaims', 'getOpenAdmissions', 'getRunningTab'], day: 'Day 3' },
-  { label: 'IP Notes: patient list, opening a patient, timeline, care team, investigations', fns: ['getActiveIPAdmissionsForNotes', 'getIPNotesBundle', 'getIPTimeline', 'getIPLabResults'], day: 'Day 3' },
-  { label: 'OP consultation: composer, last visit, allergies, templates, drug and test lists, safety check', fns: ['getComposerContext', 'getLastVisitRecall', 'getPatientAllergies', 'fetchOPDrugMaster', 'checkRxSafety'], day: 'Day 3' },
+  { label: 'IP Notes: patient list, opening a patient, timeline, care team, investigations, printed notes', fns: ['getActiveIPAdmissionsForNotes', 'getIPNotesBundle', 'getIPTimeline', 'getIPLabResults', 'getIPNotesPrintHtml'], day: 'Day 3' },
+  { label: 'OP consultation: composer, last visit, allergies, templates, drug and test lists, safety check, doses, printed prescription', fns: ['getComposerContext', 'getLastVisitRecall', 'getPatientAllergies', 'fetchOPDrugMaster', 'checkRxSafety', 'suggestPaediatricDose', 'getOPPrescriptionHtml'], day: 'Day 3' },
   { label: 'Billing ledger and Hospital Billing lists', fns: ['hb_getInvoices'], day: 'Day 4' },
   { label: 'Pharmacy stock, sales and GST reports', fns: [], day: 'Day 5' },
   { label: 'Lab queues, IP ward roster and running bill, admitted patients\' timelines', fns: [], day: 'Day 6' },

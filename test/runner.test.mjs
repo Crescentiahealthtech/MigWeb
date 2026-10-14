@@ -78,8 +78,8 @@ test('writes never go to the Edge Function; each Day 3 write copies what it chan
     const spec = FLUSH_AFTER[fn];
     assert.deepEqual(log.apps[0].flush, Array.isArray(spec) ? spec : spec.sheets, fn);
   }
-  // Every served name is a read (get…, list…, fetch…, check…, …Eligibility).
-  for (const fn of RUNNER) assert.match(fn, /^(get|list|fetch|check)|Eligibility$/, fn);
+  // Every served name is a read (get…, list…, fetch…, check…, a dose worked out, …Eligibility).
+  for (const fn of RUNNER) assert.match(fn, /^(get|list|fetch|check|buildTaperPlan$|suggestPaediatricDose$)|Eligibility$/, fn);
 });
 
 test('a bill made at a counter not moved yet is copied just after its answer, in the background', async () => {
