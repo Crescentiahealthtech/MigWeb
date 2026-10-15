@@ -256,12 +256,13 @@ test('a doctor\'s slots for a day: the weekly hours, less the blocked time, with
   assert.deepEqual(log.apps, []);
 });
 
-test('saving hours, leave or an account copies those sheets at once', async () => {
+test('saving hours, leave or an account copies those sheets at once (when Apps Script makes it)', async () => {
   const { log, ctx } = network();
   for (const [fn, sheets] of [['saveDoctorSchedule', ['Doctor_Schedules']], ['addScheduleException', ['Doctor_Schedule_Exceptions']],
                               ['setDoctorDayBlocks', ['Doctor_Schedule_Exceptions']], ['crescSaveUserAccess', ['Users']],
                               ['crescSetAccountActive', ['Users']], ['crescCreateStaffAccount', ['Users', 'Doctors']]]) {
-    await call(fn, [{}, 'T'], ctx);
+    // (Made in Supabase since Phase W; saves there switched off, Apps Script makes them as before.)
+    await call(fn, [{}, 'T'], ctx, { e: env({ EDGE_OFF: 'writes' }) });
     assert.deepEqual(log.apps.at(-1).flush, sheets, fn);
   }
 });
