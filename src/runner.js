@@ -61,7 +61,8 @@ export const RUNNER = new Set([
   'ds_getSignableDoctors', 'getIPDiabeticPrintHtml', 'getIPDrugChartPrintHtml', 'getIPEWSPrintHtml', 'searchLabRecords',
   // The clinical timeline: the Worker answers outpatients itself (src/app.js);
   // an admitted patient's, which it leaves, goes here before Apps Script.
-  'buildLongitudinalTimeline'
+  'buildLongitudinalTimeline',
+  'getUsernameMappingReport', 'getEncounterForPrint'
 ]);
 
 /**
