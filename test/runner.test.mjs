@@ -75,8 +75,8 @@ test('EDGE_OFF=runner, EDGE_OFF=<name>, EDGE_OFF=all and no key leave the reads 
   }
 });
 
-test('saves not moved (Phase W groups A-C aside) never go to the Edge Function; each copies what it changed before answering', async () => {
-  for (const fn of ['saveIPNote', 'recordLedgerEntry', 'settleDischarge', 'addIPCrossConsult', 'registerPatient', 'processPharmacyBill', 'collectLabSample']) {
+test('saves kept with Apps Script never go to the Edge Function; each copies what it changed before answering', async () => {
+  for (const fn of ['crescChangePassword', 'crescAdminResetPassword', 'ds_sign', 'declareVisitingConsultant', 'endVisitingConsultant', 'lockFinancialPeriod']) {
     assert.ok(!RUNNER.has(fn) && !WRITER.has(fn), fn);
     const log = network(() => { throw new Error('a write reached the Edge Function'); });
     await worker.fetch(call(fn, [{}, 'TOKEN']), env(), ctx);
@@ -85,7 +85,8 @@ test('saves not moved (Phase W groups A-C aside) never go to the Edge Function; 
   }
   // A save the Edge Function refuses (nothing written) is Apps Script's, copied as before.
   for (const fn of ['saveOPEncounterScoped', 'saveConsultTemplate', 'hb_saveInvoice', 'hb_recordPayment', 'hb_cancelInvoice', 'hb_changePaymentMode',
-                    'hb_dismissOrder', 'updateAppointmentStatus']) {
+                    'hb_dismissOrder', 'updateAppointmentStatus', 'registerPatient', 'saveIPNote', 'recordLedgerEntry', 'settleDischarge',
+                    'processPharmacyBill', 'collectLabSample', 'saveIPDiabeticEntry', 'crescSetAccountActive']) {
     assert.ok(WRITER.has(fn) && !RUNNER.has(fn), fn);
     const log = network(() => new Response('{"fallback":"x"}', { status: 409, headers: { 'x-cresrx-why': 'a write: Appointments.deleteRow' } }));
     const r = await worker.fetch(call(fn, [{}, 'TOKEN']), env(), ctx);
@@ -116,7 +117,8 @@ test('a write listed to copy in the background is copied just after its answer (
     return inner(url, init);
   };
   const waits = [];
-  const r = await worker.fetch(call('collectAndBillLabSample', [{ items: [] }, 'TOKEN']), env(), { waitUntil: (p) => waits.push(p) });
+  // (Made in Supabase since Phase W: saves there switched off, so Apps Script makes it.)
+  const r = await worker.fetch(call('collectAndBillLabSample', [{ items: [] }, 'TOKEN']), env({ EDGE_OFF: 'writes' }), { waitUntil: (p) => waits.push(p) });
   assert.deepEqual((await r.json()).v, { from: 'apps-script', fn: 'collectAndBillLabSample' });      // answered, the copy still on its way
   assert.equal(waits.length, 1);
   release();
@@ -124,7 +126,7 @@ test('a write listed to copy in the background is copied just after its answer (
   assert.deepEqual(log.apps, [{ fn: 'collectAndBillLabSample', args: [{ items: [] }, 'TOKEN'] },
                               { fn: 'getAppBuild', args: [], flush: FLUSH_SOON.collectAndBillLabSample }]);
   // An old lab bill settled: its watched columns are compared too.
-  await worker.fetch(call('settleLabBillBalance', [{ billId: 'LB-1' }, 'TOKEN']), env(), { waitUntil: (p) => waits.push(p) });
+  await worker.fetch(call('settleLabBillBalance', [{ billId: 'LB-1' }, 'TOKEN']), env({ EDGE_OFF: 'writes' }), { waitUntil: (p) => waits.push(p) });
   await Promise.all(waits);
   assert.deepEqual(log.apps.at(-1), { fn: 'getAppBuild', args: [], flush: FLUSH_SOON.settleLabBillBalance.sheets, flushOpts: { watch: true } });
   // Never both: a call is flushed before its answer or after it.
@@ -135,7 +137,7 @@ test('a write listed to copy in the background is copied just after its answer (
   }
 });
 
-test('a save of groups A-C is made by the Edge Function: one call id, its answer back, then the Sheet asked to take it', async () => {
+test('a save of groups A-J is made by the Edge Function: one call id, its answer back, then the Sheet asked to take it', async () => {
   const log = network(() => new Response('{"ok":true,"v":{"success":true,"invoiceNo":"HB-2610-0001"}}',
     { headers: { 'x-cresrx-wrote': '41', 'x-cresrx-ms': '640', 'content-type': 'application/json' } }));
   const waits = [];
@@ -209,10 +211,11 @@ test('EDGE_OFF=writes (or the save\'s name) sends saves to Apps Script, reads st
   assert.deepEqual(JSON.parse(new TextDecoder().decode(withDrain(b))), { fn: 'x', args: [{ a: '}' }], flush: ['T'], drain: true });
 });
 
-test('the saves the Worker sends are exactly groups A-C, none a read, none deleting a row or setting a password', () => {
+test('the saves the Worker sends are groups A-J, none a read; the ones that need what never leaves Google are not among them', () => {
   for (const fn of WRITER) assert.ok(!RUNNER.has(fn) && FLUSH_AFTER[fn], fn + ' copies as before if Apps Script makes it');
-  for (const fn of ['registerPatient', 'deletePhraseTemplate', 'crescChangePassword', 'crescAdminResetPassword']) assert.ok(!WRITER.has(fn), fn);
-  assert.equal(WRITER.size, 26);
+  for (const fn of ['crescChangePassword', 'crescAdminResetPassword', 'ds_sign', 'declareVisitingConsultant', 'endVisitingConsultant', 'lockFinancialPeriod']) assert.ok(!WRITER.has(fn), fn);
+  for (const fn of ['registerPatient', 'deletePhraseTemplate', 'saveIPNote', 'settleDischarge', 'processPharmacyBill', 'collectLabSample', 'ds_initiateDischarge', 'recordConsent']) assert.ok(WRITER.has(fn), fn);
+  assert.equal(WRITER.size, 123);
 });
 
 test('an admitted patient\'s timeline, which the Worker\'s own port leaves, goes to the Edge Function before Apps Script', async () => {

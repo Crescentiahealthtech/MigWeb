@@ -71,23 +71,53 @@ export const RUNNER = new Set([
  * own save, run on the copy, all its writes committed there in one go, then
  * written into the Sheet by Apps Script within seconds (sbDrainEdgeWrites_)
  * — straight away, as this asks for it after each save (drainSoon). A save
- * it cannot make exactly (a row deleted, a password set, a Google service)
+ * it cannot make exactly (a tab created, a session ended, a Google service)
  * is refused with nothing written, and Apps Script makes it, as before.
+ * Kept with Apps Script altogether: a password changed or reset, a summary
+ * signed, a visiting consultant's session, a month's books locked (each
+ * needs what never leaves Google: a password digest, a session, a setting).
  *
  * A call id goes with each save (x-cresrx-call): if the answer is lost on
  * the way, the call is closed in the log by it (recover), so a save is never
  * made twice, here and by Apps Script.
  */
 export const WRITER = new Set([
-  // Group A: appointments and patients (not a registration: it sets a
-  // password, which never leaves Google)
+  // Group A: appointments and patients
   'updateAppointmentStatus', 'setAppointmentTime', 'barcodeUpdateAppointment', 'submitNewAppointment', 'bookAppointmentScoped',
   'portalBookAppointment', 'portalCancelAppointment', 'updatePatientProfile', 'saveUserProfile', 'savePatientAllergies',
-  // Group B: the OP consultation (not a phrase removed: it deletes a row)
+  // Group B: the OP consultation
   'saveOPEncounterScoped', 'createOPReferral', 'respondToOPReferral', 'saveConsultTemplate', 'applyConsultTemplate',
   'deleteConsultTemplate', 'saveRxBundle', 'noteRxBundleUsed', 'deleteRxBundle', 'promotePhraseToClinic', 'saveExamDefaults',
   // Group C: Hospital Billing
-  'hb_saveInvoice', 'hb_recordPayment', 'hb_cancelInvoice', 'hb_changePaymentMode', 'hb_dismissOrder'
+  'hb_saveInvoice', 'hb_recordPayment', 'hb_cancelInvoice', 'hb_changePaymentMode', 'hb_dismissOrder',
+  // Group D: registration, the doctors' hours, accounts
+  'registerPatient', 'saveDoctorSchedule', 'addScheduleException', 'deleteScheduleException', 'setDoctorDayBlocks',
+  'crescSaveUserAccess', 'crescSetAccountActive', 'crescCreateStaffAccount', 'deletePhraseTemplate',
+  // Group E: the ward and IP notes
+  'saveNewAdmissionLedger', 'processBedTransfer', 'processPatientDischarge', 'updateBedStatusInDB', 'saveIPNote',
+  'updateIPMedAction', 'addIPCrossConsult', 'removeIPCrossConsult', 'addIPCareTeamMember', 'removeIPCareTeamMember',
+  'updateIPDiagnosis', 'saveIPDiabeticEntry', 'voidIPDiabeticEntry', 'saveOTRecord', 'saveMLCRecord', 'saveIPCasesheet',
+  'amendIPCasesheet',
+  // Group F: Finance Hub and the IP bill
+  'recordLedgerEntry', 'recordBankTransfer', 'moveShiftCashOut', 'openShift', 'closeShift', 'recordPayable', 'payPayable',
+  'createManualClaim', 'updateClaim', 'settleClaim', 'addIpCharge', 'addIpCharges', 'billChargeToIp', 'editIpCharge',
+  'voidIpCharge', 'markIpChargePaidAtCounter', 'collectIpAdvance', 'addIpVisit', 'saveDischargeDraft', 'settleReceivableBill',
+  'settleDischarge',
+  // Group G: the pharmacy
+  'processPharmacyBill', 'processPharmacyReturn', 'settleCreditBill', 'changePharmacyPayMode', 'savePharmacyPurchase',
+  'cancelPharmacyPurchase', 'createSupplierReturn', 'savePharmacyInventory', 'updatePharmacyStock', 'deletePharmacyBatch',
+  'discardPharmacyStock', 'applyPackSizes', 'applyScheduleClassification',
+  // Group H: the lab
+  'createLabRequest', 'advanceOrderStatus', 'collectLabSample', 'receiveLabSample', 'receiveLabSampleByBarcode', 'rejectLabSample',
+  'collectAndBillLabSample', 'generateLabBill', 'labCancelBill', 'labCancelPendingOrder', 'settleLabBillBalance',
+  'saveLabResultsDraft', 'submitLabResults', 'verifyLabResults', 'labAcknowledgeCritical', 'saveCatalogEntry',
+  'savePanelWithParameters', 'setCatalogActive', 'saveExternalLabResult', 'voidExternalLabResult',
+  // Group I: discharge summaries (signing aside)
+  'ds_initiateDischarge', 'ds_saveWorking', 'ds_regenerate', 'ds_submit', 'ds_return', 'ds_startAmendment', 'ds_discardAmendment',
+  'ds_cancel',
+  // Group J: mother & child, consent, nominees
+  'mcOpenAntenatal', 'mcCloseAntenatal', 'mcRecordAntenatalVisit', 'mcRecordImmunisation', 'mcMarkDoseNotGiven', 'recordConsent',
+  'withdrawConsent', 'recordNomination', 'revokeNomination'
 ]);
 
 const fnUrl = (env) => String(env.SUPABASE_URL).replace(/\/+$/, '') + '/functions/v1/cresrx-reads';

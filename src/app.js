@@ -876,7 +876,20 @@ export const MIGRATION_SCREENS = [
     fns: ['saveOPEncounterScoped', 'createOPReferral', 'respondToOPReferral', 'saveConsultTemplate', 'saveRxBundle', 'saveExamDefaults'], day: 'Phase W' },
   { label: 'Saves, group C: Hospital Billing — bills, payments, cancellations, payment modes (made in Supabase, in the Sheet seconds later)',
     fns: ['hb_saveInvoice', 'hb_recordPayment', 'hb_cancelInvoice', 'hb_changePaymentMode', 'hb_dismissOrder'], day: 'Phase W' },
-  { label: 'Other saves (registration, the lab, pharmacy, ward, discharge, Finance Hub) — Apps Script for now', fns: [], day: 'later' }
+  { label: 'Saves, group D: registration, doctors\' hours and leave, staff access and new accounts (made in Supabase, in the Sheet seconds later)',
+    fns: ['registerPatient', 'saveDoctorSchedule', 'addScheduleException', 'setDoctorDayBlocks', 'crescSaveUserAccess', 'crescCreateStaffAccount'], day: 'Phase W' },
+  { label: 'Saves, group E: the ward — admissions, transfers, discharge, beds, IP notes, care team, charts, OT and MLC records, case sheets',
+    fns: ['saveNewAdmissionLedger', 'processBedTransfer', 'processPatientDischarge', 'saveIPNote', 'addIPCareTeamMember', 'saveIPCasesheet'], day: 'Phase W' },
+  { label: 'Saves, group F: Finance Hub — ledger, shifts, payables, claims; the IP bill — charges, advances, settlement',
+    fns: ['recordLedgerEntry', 'openShift', 'closeShift', 'recordPayable', 'payPayable', 'createManualClaim', 'addIpCharge', 'collectIpAdvance', 'settleDischarge'], day: 'Phase W' },
+  { label: 'Saves, group G: the pharmacy — bills, returns, purchases, stock, supplier returns',
+    fns: ['processPharmacyBill', 'processPharmacyReturn', 'savePharmacyPurchase', 'updatePharmacyStock', 'createSupplierReturn'], day: 'Phase W' },
+  { label: 'Saves, group H: the lab — orders, bills, samples, results, verification, catalogue, outside reports',
+    fns: ['createLabRequest', 'generateLabBill', 'collectLabSample', 'saveLabResultsDraft', 'verifyLabResults', 'saveCatalogEntry', 'saveExternalLabResult'], day: 'Phase W' },
+  { label: 'Saves, groups I and J: discharge summaries (not the signature), mother & child, consent, nominees',
+    fns: ['ds_initiateDischarge', 'ds_saveWorking', 'ds_submit', 'mcOpenAntenatal', 'mcRecordImmunisation', 'recordConsent', 'recordNomination'], day: 'Phase W' },
+  { label: 'Saves that stay with Apps Script: passwords changed or reset, a summary signed, a visiting consultant\'s session, a month locked; PDFs, Drive, e-mail with attachments',
+    fns: [], day: 'stays' }
 ];
 export function migrationStatus(env) {
   const on = (f) => (EDGE[f] && edgeOn(env, f)) || (RUNNER.has(f) && edgeOn(env, f) && edgeOn(env, 'runner')) ||
