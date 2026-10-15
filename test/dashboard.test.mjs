@@ -45,6 +45,7 @@ function network({ age = 5000, stored = true, claim = true } = {}) {
     }
     if (url.endsWith('/rpc/snapshot_claim')) { log.claims.push(body.p.ms); return Response.json(claim); }
     if (url.endsWith('/rpc/session_get')) return new Response('null', { headers: { 'content-type': 'application/json' } });
+    if (url.endsWith('/rpc/edge_writes')) return Response.json({ n: 0 });          // no save made in Supabase waiting
     throw new Error('unexpected fetch ' + url);
   };
   const ctx = { waitUntil: (p) => waits.push(p) };

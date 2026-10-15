@@ -12,7 +12,8 @@
 //
 // The list is the Edge Function's served.json; the MIGRATION repo's
 // tools/sbmirror.js checks the two agree and that each gives Apps Script's
-// own answer on the demo year.
+// own answer on the demo year. The saves (WRITER, below) likewise, and
+// tools/edgewrites.js proves each leaves the Sheet as Apps Script would.
 // ============================================================================
 
 export const RUNNER = new Set([
@@ -64,6 +65,96 @@ export const RUNNER = new Set([
   'buildLongitudinalTimeline',
   'getUsernameMappingReport', 'getEncounterForPrint'
 ]);
+
+/**
+ * Saves the Edge Function makes (Phase W: served.json "writes"): the app's
+ * own save, run on the copy, all its writes committed there in one go, then
+ * written into the Sheet by Apps Script within seconds (sbDrainEdgeWrites_)
+ * — straight away, as this asks for it after each save (drainSoon). A save
+ * it cannot make exactly (a row deleted, a password set, a Google service)
+ * is refused with nothing written, and Apps Script makes it, as before.
+ *
+ * A call id goes with each save (x-cresrx-call): if the answer is lost on
+ * the way, the call is closed in the log by it (recover), so a save is never
+ * made twice, here and by Apps Script.
+ */
+export const WRITER = new Set([
+  // Group A: appointments and patients (not a registration: it sets a
+  // password, which never leaves Google)
+  'updateAppointmentStatus', 'setAppointmentTime', 'barcodeUpdateAppointment', 'submitNewAppointment', 'bookAppointmentScoped',
+  'portalBookAppointment', 'portalCancelAppointment', 'updatePatientProfile', 'saveUserProfile', 'savePatientAllergies',
+  // Group B: the OP consultation (not a phrase removed: it deletes a row)
+  'saveOPEncounterScoped', 'createOPReferral', 'respondToOPReferral', 'saveConsultTemplate', 'applyConsultTemplate',
+  'deleteConsultTemplate', 'saveRxBundle', 'noteRxBundleUsed', 'deleteRxBundle', 'promotePhraseToClinic', 'saveExamDefaults',
+  // Group C: Hospital Billing
+  'hb_saveInvoice', 'hb_recordPayment', 'hb_cancelInvoice', 'hb_changePaymentMode', 'hb_dismissOrder'
+]);
+
+const fnUrl = (env) => String(env.SUPABASE_URL).replace(/\/+$/, '') + '/functions/v1/cresrx-reads';
+const restUrl = (env, fn) => String(env.SUPABASE_URL).replace(/\/+$/, '') + '/rest/v1/rpc/' + fn;
+function keyHeaders(env) {
+  const h = { apikey: env.SUPABASE_SECRET_KEY, 'Content-Type': 'application/json' };
+  if (!/^sb_/.test(String(env.SUPABASE_SECRET_KEY || ''))) h.Authorization = 'Bearer ' + env.SUPABASE_SECRET_KEY;
+  return h;
+}
+const SAVE_WAIT_MS = 45000;
+
+/**
+ * A save whose answer did not come back: made, or not? The call is closed in
+ * the log by its id (edge_writes {fence}): either it was made, and this has
+ * its answer ({answer}), or from now on it cannot be, and Apps Script may make
+ * it ({why}). {unsure} when Supabase cannot be asked: the person is told.
+ */
+export async function recover(env, callId) {
+  try {
+    const r = await fetch(restUrl(env, 'edge_writes'), { method: 'POST', headers: keyHeaders(env), body: JSON.stringify({ p: { fence: callId } }) });
+    if (!r.ok) return { unsure: true };
+    const st = await r.json();
+    if (st && st.fenced === true) return { why: 'the save service did not answer' };
+    if (st && st.found) return st.fenced ? { why: 'the save service did not answer' } : { answer: st.answer };
+    return { unsure: true };
+  } catch (e) { return { unsure: true }; }
+}
+
+/**
+ * A save sent to the Edge Function (its bytes, as the page sent them). The
+ * answer as a Response; {why} when nothing was or can now be written, for
+ * Apps Script; {answer} when it was made but its own answer was lost (from
+ * the log); {unsure} when it may have been made and Supabase cannot say.
+ */
+export async function viaSaver(env, bytes, callId) {
+  const headers = Object.assign(keyHeaders(env), { 'x-cresrx-call': callId });
+  if (env.SUPABASE_REGION) headers['x-region'] = String(env.SUPABASE_REGION);
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), SAVE_WAIT_MS);
+  let res;
+  try {
+    res = await fetch(fnUrl(env), { method: 'POST', body: bytes, headers, signal: ctl.signal });
+  } catch (e) {
+    clearTimeout(timer);
+    return recover(env, callId);
+  }
+  clearTimeout(timer);
+  if (res.status === 200) return res;
+  const why = res.headers.get('X-CresRx-Why');
+  try { if (res.body) await res.body.cancel(); } catch (e) { /* nothing to read */ }
+  // 409: refused before anything was written. 404: not deployed. Anything
+  // else may have come after a commit: the log says.
+  if (res.status === 409) return { why: why || 'the save service refused it' };
+  if (res.status === 404) return { why: 'the reads service is not deployed' };
+  // Unsure, or failed after it may have committed: the call is closed in the log.
+  return recover(env, callId);
+}
+
+/** Are saves made in Supabase waiting for the Sheet? true when it cannot say (Apps Script then checks itself). */
+export async function savesWaiting(env) {
+  if (!env.SUPABASE_SECRET_KEY) return false;
+  try {
+    const r = await fetch(restUrl(env, 'edge_writes'), { method: 'POST', headers: keyHeaders(env), body: JSON.stringify({ p: { pending: true } }) });
+    if (!r.ok) return true;
+    const j = await r.json();
+    return !(j && j.n === 0);
+  } catch (e) { return true; }
+}
 
 /**
  * The reads each screen bundle (crescGetBundle) makes as it opens. When the

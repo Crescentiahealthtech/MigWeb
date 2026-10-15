@@ -90,6 +90,7 @@ function network({ stored = {}, snapshots = {} } = {}) {
                           { headers: { 'content-type': 'application/json' } });
     }
     if (fn === 'snapshot_claim') return j(true);
+    if (fn === 'edge_writes') return j({ n: 0 });             // no save made in Supabase waiting
     if (fn === 'mirror_query') {
       return j({ results: body.p.queries.map((q) => ({ Doctors: DOCTORS, Doctor_Schedules: SCHED, Doctor_Schedule_Exceptions: EXC,
                                                        Appointments: APPTS, Patients: PATIENTS })[q.sheet] || { found: false }) });

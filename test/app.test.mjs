@@ -41,6 +41,10 @@ function network() {
       return Response.json({ ok: true, v: { from: 'apps-script', fn: b.fn } });
     }
     if (url.endsWith('/rest/v1/rpc/mirror_query')) { log.supabase++; return Response.json({ results: [DOCTORS, APPTS, PATS] }); }
+    // No save made in Supabase is waiting for the Sheet.
+    if (url.endsWith('/rest/v1/rpc/edge_writes')) return Response.json({ n: 0 });
+    // The Edge Function refuses every save here (tests/runner.test.mjs has the ones it makes).
+    if (url.endsWith('/functions/v1/cresrx-reads')) return new Response('{"fallback":"test"}', { status: 409, headers: { 'x-cresrx-why': 'refused in this test' } });
     throw new Error('unexpected fetch ' + url);
   };
   return log;
@@ -137,6 +141,7 @@ test('a passed-through call goes byte for byte, and its answer comes back unread
   const sent = [];
   globalThis.caches = { default: { match: async () => undefined, put: async () => {} } };
   globalThis.fetch = async (url, init = {}) => {
+    if (String(url).endsWith('/rest/v1/rpc/edge_writes')) return Response.json({ n: 0 });
     sent.push(init.body);
     return new Response('{"ok":true,"v":"' + 'x'.repeat(200000) + '"}', { headers: { 'content-type': 'application/json; charset=utf-8' } });
   };

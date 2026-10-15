@@ -36,14 +36,19 @@
 //   * fresh after a change: a call that writes goes to Apps Script with
 //     "flush" (Web_Proxy.gs), which copies the sheets it changed to Supabase
 //     before answering, so the screen's reload shows it. Changes made in the
-//     sheet by hand reach the copy with the next sync (a minute).
+//     sheet by hand reach the copy with the next sync (a minute);
+//   * saves made in Supabase (Phase W, src/runner.js WRITER): the Edge
+//     Function makes them on the copy, and Apps Script writes them into the
+//     Sheet straight after. Any call passed to Apps Script while one is
+//     still waiting carries "drain", so Apps Script writes it in first.
 //
 // When the Worker leaves a call it could answer to Apps Script, the answer
 // says why (X-CresRx-Why; the migration badge shows it).
 //
 // Settings: APP_EXEC_URL (the deployment's …/exec address; the same one the
 // clinic's address uses), SUPABASE_URL, SUPABASE_SECRET_KEY. EDGE_OFF names
-// calls to leave to Apps Script ("all" for every one).
+// calls to leave to Apps Script ("all" for every one, "writes" for every
+// save made in Supabase).
 // ============================================================================
 
 import { sessionLedgerQueries, buildLedger, doctorsFrom, resolveScope, dayKey, istDay } from './ledger.js';
@@ -52,7 +57,7 @@ import { registerQuery, allPatients, masterDirectory, demographicsQuery, demogra
          patientKey } from './patients.js';
 import { Unsure, myPermissions, touchSession, pickerQuery, doctorPicker, profileQuery, userProfile,
          slotsDay, slotsQuery, doctorSlots, scheduleQuery, doctorSchedule } from './signin.js';
-import { RUNNER, viaRunner, warmRunner } from './runner.js';
+import { RUNNER, WRITER, viaRunner, viaSaver, savesWaiting, warmRunner } from './runner.js';
 
 const SHELL_EDGE_SECONDS = 20;
 const IDENTITY_MEMO_MS = 15 * 1000;            // a session looked up in Supabase, remembered by this instance
@@ -259,6 +264,32 @@ export async function rpc(request, env, ctx, supabase) {
   } else if (EDGE[fn]) {
     why = 'switched off (EDGE_OFF)';
   }
+  // A save the Edge Function makes (Phase W): written to Supabase, then
+  // into the Sheet by Apps Script straight after (drainSoon). Refused, with
+  // nothing written: Apps Script makes it, as before.
+  if (WRITER.has(fn)) {
+    if (edgeOn(env, fn) && edgeOn(env, 'writes') && edgeOn(env, 'runner')) {
+      const r = await viaSaver(env, bytes, crypto.randomUUID());
+      if (r instanceof Response) {
+        later(ctx, 'drain after ' + fn, drainSoon(env));
+        return new Response(r.body, { status: 200, headers: secure({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
+          'X-CresRx-Source': 'supabase', 'X-CresRx-Via': 'saved in Supabase', 'X-CresRx-Runs': r.headers.get('X-CresRx-Runs') || '',
+          'X-CresRx-Ms': r.headers.get('X-CresRx-Ms') || '', 'X-CresRx-Load-Ms': r.headers.get('X-CresRx-Load-Ms') || '',
+          'X-CresRx-Reused': r.headers.get('X-CresRx-Reused') || '', 'X-CresRx-Wrote': r.headers.get('X-CresRx-Wrote') || '' }) });
+      }
+      if (r && 'answer' in r) {
+        // Made, its answer lost on the way: the log's copy of it.
+        later(ctx, 'drain after ' + fn, drainSoon(env));
+        return json({ ok: true, v: r.answer === undefined ? null : r.answer }, 200, { 'X-CresRx-Source': 'supabase', 'X-CresRx-Via': 'saved in Supabase (answer from its log)' });
+      }
+      if (r && r.unsure) {
+        // Never made twice: the person is told to look first.
+        return json({ ok: false, e: 'The save could not be confirmed. Please check whether it was saved before saving again.' }, 200,
+                    { 'X-CresRx-Why': 'the save could not be confirmed' });
+      }
+      why = r.why;
+    } else why = 'switched off (EDGE_OFF)';
+  }
   // The app's own code on the copy: a read only it serves, or one the
   // Worker's port leaves (an admitted patient's timeline).
   if (RUNNER.has(fn) && (!EDGE[fn] || (why && why !== 'switched off (EDGE_OFF)'))) {
@@ -277,7 +308,11 @@ export async function rpc(request, env, ctx, supabase) {
     } else why = 'switched off (EDGE_OFF)';
   }
   if (fn === 'crescLogSignOut') await forget(bytes);
-  const answer = await forward(env, FLUSH_AFTER[fn] ? withFlush(bytes, FLUSH_AFTER[fn]) : bytes, why);
+  let out = FLUSH_AFTER[fn] ? withFlush(bytes, FLUSH_AFTER[fn]) : bytes;
+  // Saves made in Supabase not in the Sheet yet: Apps Script writes them in
+  // first (doPost "drain"), so this call sees them as if made there.
+  if (await savesWaiting(env)) out = withDrain(out);
+  const answer = await forward(env, out, why);
   if (FLUSH_SOON[fn] && ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(flushSoon(env, FLUSH_SOON[fn]));
   return answer;
 }
@@ -293,6 +328,31 @@ async function flushSoon(env, spec) {
     const r = await fetch(execUrl(env), { method: 'POST', body: withFlush(FLUSH_CARRIER, spec), headers: { 'Content-Type': 'application/json' }, redirect: 'follow' });
     if (r.body) await r.body.cancel();
   } catch (e) { /* the every-minute sync copies it */ }
+}
+
+/**
+ * Asks Apps Script to write the saves made in Supabase into the Sheet now
+ * (doPost "drain", sbDrainEdgeWrites_), on a call of its own after the
+ * save's answer has gone: the build check, carrying the drain.
+ */
+const DRAIN_CARRIER = new TextEncoder().encode('{"fn":"getAppBuild","args":[],"drain":true}');
+async function drainSoon(env) {
+  try {
+    const r = await fetch(execUrl(env), { method: 'POST', body: DRAIN_CARRIER, headers: { 'Content-Type': 'application/json' }, redirect: 'follow' });
+    if (r.body) await r.body.cancel();
+  } catch (e) { /* the every-minute tick writes them */ }
+}
+
+/** The same body with "drain": true added before its closing brace, without parsing it. */
+export function withDrain(bytes) {
+  let end = bytes.length - 1;
+  while (end >= 0 && bytes[end] !== 0x7d) end--;
+  if (end < 0) return bytes;
+  const tail = new TextEncoder().encode(',"drain":true}');
+  const out = new Uint8Array(end + tail.length);
+  out.set(bytes.subarray(0, end), 0);
+  out.set(tail, end);
+  return out;
 }
 
 /** The answer "null" from the Worker itself (an EDGE handler's null means "ask Apps Script"). */
@@ -809,10 +869,18 @@ export const MIGRATION_SCREENS = [
   { label: 'Discharge desk, IP case sheet, admitted patients\' timelines, patient portal, consent, barcodes (the app\'s own code on Supabase)',
     fns: ['ds_getQueue', 'ds_getSummary', 'getIPCasesheetContext', 'buildLongitudinalTimeline', 'portalHome', 'getConsentStatus', 'resolveScan'], day: 'Day 6' },
   { label: 'Sign-in itself (password, authenticator code), account admin, label printing — Apps Script', fns: [], day: 'stays' },
-  { label: 'All writes (registrations, bookings, bills, consultations) — stay on Apps Script until the server stage', fns: [], day: 'later' }
+  { label: 'Saves, group A: bookings, check-ins, appointment status and time, patients\' profiles and allergies (made in Supabase, in the Sheet seconds later)',
+    fns: ['submitNewAppointment', 'bookAppointmentScoped', 'updateAppointmentStatus', 'setAppointmentTime', 'barcodeUpdateAppointment',
+          'portalBookAppointment', 'updatePatientProfile', 'savePatientAllergies'], day: 'Phase W' },
+  { label: 'Saves, group B: the OP consultation, referrals, templates, prescription bundles (made in Supabase, in the Sheet seconds later)',
+    fns: ['saveOPEncounterScoped', 'createOPReferral', 'respondToOPReferral', 'saveConsultTemplate', 'saveRxBundle', 'saveExamDefaults'], day: 'Phase W' },
+  { label: 'Saves, group C: Hospital Billing — bills, payments, cancellations, payment modes (made in Supabase, in the Sheet seconds later)',
+    fns: ['hb_saveInvoice', 'hb_recordPayment', 'hb_cancelInvoice', 'hb_changePaymentMode', 'hb_dismissOrder'], day: 'Phase W' },
+  { label: 'Other saves (registration, the lab, pharmacy, ward, discharge, Finance Hub) — Apps Script for now', fns: [], day: 'later' }
 ];
 export function migrationStatus(env) {
-  const on = (f) => (EDGE[f] && edgeOn(env, f)) || (RUNNER.has(f) && edgeOn(env, f) && edgeOn(env, 'runner'));
+  const on = (f) => (EDGE[f] && edgeOn(env, f)) || (RUNNER.has(f) && edgeOn(env, f) && edgeOn(env, 'runner')) ||
+    (WRITER.has(f) && edgeOn(env, f) && edgeOn(env, 'writes') && edgeOn(env, 'runner'));
   return { screens: MIGRATION_SCREENS.map((g) => ({ label: g.label, day: g.day, done: g.fns.length > 0 && g.fns.every(on) })) };
 }
 

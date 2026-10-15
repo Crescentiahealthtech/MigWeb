@@ -5,8 +5,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../src/worker.js';
-import { RUNNER } from '../src/runner.js';
-import { FLUSH_AFTER, FLUSH_SOON, EDGE } from '../src/app.js';
+import { RUNNER, WRITER, recover } from '../src/runner.js';
+import { FLUSH_AFTER, FLUSH_SOON, EDGE, withDrain } from '../src/app.js';
 
 const EXEC = 'https://script.google.com/macros/s/AKfyTEST/exec';
 const FN_URL = 'https://x.supabase.co/functions/v1/cresrx-reads';
@@ -16,14 +16,19 @@ const ctx = { waitUntil() {} };
 const body = (fn, args) => JSON.stringify({ fn, args });
 const call = (fn, args) => new Request('https://migweb.example/rpc', { method: 'POST', headers: { 'content-type': 'application/json' }, body: body(fn, args) });
 
-/** Apps Script and the Edge Function stood in for; `edge` answers the Edge Function's calls. */
-function network(edge) {
-  const log = { apps: [], edge: [] };
+const LOG_URL = 'https://x.supabase.co/rest/v1/rpc/edge_writes';
+/**
+ * Apps Script and the Edge Function stood in for; `edge` answers the Edge
+ * Function's calls, `saves` the save log's (edge_writes: {pending} and {status}).
+ */
+function network(edge, saves) {
+  const log = { apps: [], edge: [], saves: [] };
   globalThis.caches = { default: { match: async () => undefined, put: async () => {} } };
   globalThis.fetch = async (url, init = {}) => {
     url = String(url);
     const text = typeof init.body === 'string' ? init.body : new TextDecoder().decode(init.body);
-    if (url === FN_URL) { log.edge.push({ text, headers: init.headers }); return edge(JSON.parse(text)); }
+    if (url === FN_URL) { log.edge.push({ text, headers: init.headers }); return edge(JSON.parse(text), init.headers); }
+    if (url === LOG_URL) { const p = JSON.parse(text).p; log.saves.push(p); return Response.json(saves ? saves(p) : (p.pending ? { n: 0 } : { found: false })); }
     if (url === EXEC) { const b = JSON.parse(text); log.apps.push(b); return Response.json({ ok: true, v: { from: 'apps-script', fn: b.fn } }); }
     throw new Error('unexpected fetch ' + url);
   };
@@ -70,16 +75,26 @@ test('EDGE_OFF=runner, EDGE_OFF=<name>, EDGE_OFF=all and no key leave the reads 
   }
 });
 
-test('writes never go to the Edge Function; each Day 3 and Day 4 write copies what it changed before answering', async () => {
-  for (const fn of ['saveOPEncounterScoped', 'saveIPNote', 'recordLedgerEntry', 'settleDischarge', 'addIPCrossConsult', 'saveConsultTemplate',
-                    'hb_saveInvoice', 'hb_recordPayment', 'hb_cancelInvoice', 'hb_changePaymentMode', 'hb_dismissOrder']) {
-    assert.ok(!RUNNER.has(fn), fn);
+test('saves not moved (Phase W groups A-C aside) never go to the Edge Function; each copies what it changed before answering', async () => {
+  for (const fn of ['saveIPNote', 'recordLedgerEntry', 'settleDischarge', 'addIPCrossConsult', 'registerPatient', 'processPharmacyBill', 'collectLabSample']) {
+    assert.ok(!RUNNER.has(fn) && !WRITER.has(fn), fn);
     const log = network(() => { throw new Error('a write reached the Edge Function'); });
     await worker.fetch(call(fn, [{}, 'TOKEN']), env(), ctx);
     const spec = FLUSH_AFTER[fn];
     assert.deepEqual(log.apps[0].flush, Array.isArray(spec) ? spec : spec.sheets, fn);
   }
-  // Every served name is a read (get…, list…, fetch…, check…, search…, preview…, suggest…, build…, lookup…, a print, …Eligibility).
+  // A save the Edge Function refuses (nothing written) is Apps Script's, copied as before.
+  for (const fn of ['saveOPEncounterScoped', 'saveConsultTemplate', 'hb_saveInvoice', 'hb_recordPayment', 'hb_cancelInvoice', 'hb_changePaymentMode',
+                    'hb_dismissOrder', 'updateAppointmentStatus']) {
+    assert.ok(WRITER.has(fn) && !RUNNER.has(fn), fn);
+    const log = network(() => new Response('{"fallback":"x"}', { status: 409, headers: { 'x-cresrx-why': 'a write: Appointments.deleteRow' } }));
+    const r = await worker.fetch(call(fn, [{}, 'TOKEN']), env(), ctx);
+    assert.equal(log.edge.length, 1, fn);
+    const spec = FLUSH_AFTER[fn];
+    assert.deepEqual(log.apps[0].flush, Array.isArray(spec) ? spec : spec.sheets, fn);
+    assert.equal(r.headers.get('x-cresrx-why'), 'a write: Appointments.deleteRow');
+  }
+  // Every read served is a read (get…, list…, fetch…, check…, search…, preview…, suggest…, build…, lookup…, a print, …Eligibility).
   for (const fn of RUNNER) assert.match(fn, /^(hb_|mc|ds_)?(get|Get|list|fetch|check|search|preview|suggest|build|lookup|verify|resolve|portal|labList)|^mtPrint|Eligibility$/, fn);
 });
 
@@ -95,6 +110,7 @@ test('a write listed to copy in the background is copied just after its answer (
   let release; const held = new Promise((r) => { release = r; });
   const inner = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
+    if (String(url) === LOG_URL) return inner(url, init);
     const b = JSON.parse(new TextDecoder().decode(init.body));
     if (b.fn === 'getAppBuild') { const out = await inner(url, init); await held; return out; }
     return inner(url, init);
@@ -117,6 +133,86 @@ test('a write listed to copy in the background is copied just after its answer (
     delete FLUSH_SOON.collectAndBillLabSample; delete FLUSH_SOON.settleLabBillBalance;
     FLUSH_AFTER.collectAndBillLabSample = after.a; FLUSH_AFTER.settleLabBillBalance = after.b;
   }
+});
+
+test('a save of groups A-C is made by the Edge Function: one call id, its answer back, then the Sheet asked to take it', async () => {
+  const log = network(() => new Response('{"ok":true,"v":{"success":true,"invoiceNo":"HB-2610-0001"}}',
+    { headers: { 'x-cresrx-wrote': '41', 'x-cresrx-ms': '640', 'content-type': 'application/json' } }));
+  const waits = [];
+  const r = await worker.fetch(call('hb_saveInvoice', ['TOKEN', { patientId: 'DEMO0001' }]), env(), { waitUntil: (p) => waits.push(p) });
+  assert.deepEqual(await r.json(), { ok: true, v: { success: true, invoiceNo: 'HB-2610-0001' } });
+  assert.equal(r.headers.get('x-cresrx-source'), 'supabase');
+  assert.equal(r.headers.get('x-cresrx-via'), 'saved in Supabase');
+  assert.equal(r.headers.get('x-cresrx-wrote'), '41');
+  assert.equal(log.edge[0].text, body('hb_saveInvoice', ['TOKEN', { patientId: 'DEMO0001' }]));        // byte for byte
+  assert.match(log.edge[0].headers['x-cresrx-call'], /^[0-9a-f-]{36}$/);                               // its call id
+  assert.equal(log.apps.filter((b) => b.fn === 'hb_saveInvoice').length, 0);                          // not made by Apps Script
+  await Promise.all(waits);
+  assert.deepEqual(log.apps, [{ fn: 'getAppBuild', args: [], drain: true }]);                          // the Sheet takes it now
+  // A second save: a new call id.
+  await worker.fetch(call('bookAppointmentScoped', [{ doctorId: 'DOC001' }, 'TOKEN']), env(), ctx);
+  assert.notEqual(log.edge[1].headers['x-cresrx-call'], log.edge[0].headers['x-cresrx-call']);
+});
+
+test('a save whose answer is lost is answered from the log, never made again; unsure, the person is told to check', async () => {
+  // The connection dropped after the commit: closing the call finds it made, with its answer.
+  let log = network(() => { throw new TypeError('connection reset'); }, (p) => (p.fence ? { found: true, seq: 7, answer: { success: true, apptId: 'APT-1' } } : { n: 1 }));
+  let r = await worker.fetch(call('submitNewAppointment', [{ patientId: 'DEMO0001' }, 'TOKEN']), env(), ctx);
+  assert.deepEqual(await r.json(), { ok: true, v: { success: true, apptId: 'APT-1' } });
+  assert.equal(r.headers.get('x-cresrx-via'), 'saved in Supabase (answer from its log)');
+  assert.equal(log.saves[0].fence, log.edge[0].headers['x-cresrx-call']);                              // closed by its call id
+  assert.equal(log.apps.filter((b) => b.fn === 'submitNewAppointment').length, 0);
+  // Not made: closed, so it cannot be any more, and Apps Script makes it at once.
+  log = network(() => new Response('boom', { status: 502 }), (p) => (p.fence ? { fenced: true } : { n: 0 }));
+  r = await worker.fetch(call('hb_saveInvoice', ['TOKEN', { patientId: 'DEMO0001' }]), env(), ctx);
+  assert.deepEqual((await r.json()).v, { from: 'apps-script', fn: 'hb_saveInvoice' });
+  assert.equal(r.headers.get('x-cresrx-why'), 'the save service did not answer');
+  assert.ok(log.saves.some((p) => p.fence));
+  // The Edge Function could not tell whether its commit landed, and closing finds it closed by an earlier try.
+  log = network(() => new Response('{"unsure":true}', { status: 503, headers: { 'x-cresrx-unsure': '1' } }), (p) => (p.fence ? { found: true, fenced: true } : { n: 0 }));
+  r = await worker.fetch(call('hb_recordPayment', ['TOKEN', 'HB-1', 100, 'Cash', '']), env(), ctx);
+  assert.equal(log.apps.filter((b) => b.fn === 'hb_recordPayment').length, 1);
+  // Supabase cannot be asked at all: the person is told to check, and nothing makes it again.
+  log = network(() => { throw new TypeError('down'); }, () => { throw new Error('down'); });
+  globalThis.fetch = ((inner) => async (url, init) => { if (String(url) === LOG_URL) throw new TypeError('down'); return inner(url, init); })(globalThis.fetch);
+  r = await worker.fetch(call('hb_recordPayment', ['TOKEN', 'HB-1', 100, 'Cash', '']), env(), ctx);
+  const j = await r.json();
+  assert.equal(j.ok, false);
+  assert.match(j.e, /could not be confirmed/);
+  assert.equal(log.apps.filter((b) => b.fn === 'hb_recordPayment').length, 0);
+  assert.deepEqual(await recover(env(), 'call-zzzz'), { unsure: true });
+});
+
+test('EDGE_OFF=writes (or the save\'s name) sends saves to Apps Script, reads still on Supabase; saves waiting go into the Sheet first', async () => {
+  for (const e of [env({ EDGE_OFF: 'writes' }), env({ EDGE_OFF: 'hb_saveInvoice' }), env({ EDGE_OFF: 'all' })]) {
+    const log = network(() => { throw new Error('a save reached the Edge Function'); });
+    const r = await worker.fetch(call('hb_saveInvoice', ['TOKEN', {}]), e, ctx);
+    assert.equal(log.edge.length, 0);
+    assert.equal(r.headers.get('x-cresrx-why'), 'switched off (EDGE_OFF)');
+    assert.equal(log.apps[0].fn, 'hb_saveInvoice');
+  }
+  const log = network(() => new Response('{"ok":true,"v":1}'));
+  await worker.fetch(call('getIPTimeline', ['IP1', 'TOKEN']), env({ EDGE_OFF: 'writes' }), ctx);
+  assert.equal(log.edge.length, 1);                                                                     // reads stay
+  // Two saves made in Supabase still waiting: the call Apps Script answers carries "drain".
+  const l2 = network(() => { throw new Error('no'); }, (p) => (p.pending ? { n: 2 } : { found: false }));
+  await worker.fetch(call('hb_saveInvoice', ['TOKEN', {}]), env({ EDGE_OFF: 'writes' }), ctx);
+  assert.equal(l2.apps[0].drain, true);
+  assert.deepEqual(l2.apps[0].flush, FLUSH_AFTER.hb_saveInvoice.sheets);
+  // The log not answering: Apps Script is asked to look for itself.
+  const l3 = network(() => { throw new Error('no'); }, () => { throw new Error('log down'); });
+  globalThis.fetch = ((inner) => async (url, init) => (String(url) === LOG_URL ? new Response('', { status: 500 }) : inner(url, init)))(globalThis.fetch);
+  await worker.fetch(call('getPatientEMRHistory', ['DEMO0001', 'TOKEN']), env(), ctx);
+  assert.equal(l3.apps.at(-1).drain, true);
+  // drain is added without parsing the body.
+  const b = new TextEncoder().encode('{"fn":"x","args":[{"a":"}"}],"flush":["T"]} ');
+  assert.deepEqual(JSON.parse(new TextDecoder().decode(withDrain(b))), { fn: 'x', args: [{ a: '}' }], flush: ['T'], drain: true });
+});
+
+test('the saves the Worker sends are exactly groups A-C, none a read, none deleting a row or setting a password', () => {
+  for (const fn of WRITER) assert.ok(!RUNNER.has(fn) && FLUSH_AFTER[fn], fn + ' copies as before if Apps Script makes it');
+  for (const fn of ['registerPatient', 'deletePhraseTemplate', 'crescChangePassword', 'crescAdminResetPassword']) assert.ok(!WRITER.has(fn), fn);
+  assert.equal(WRITER.size, 26);
 });
 
 test('an admitted patient\'s timeline, which the Worker\'s own port leaves, goes to the Edge Function before Apps Script', async () => {
