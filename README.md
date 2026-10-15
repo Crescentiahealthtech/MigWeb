@@ -39,8 +39,8 @@ Ledger's data comes from (`src/app.js`):
 Under the table the screen says which one answered:
 "Loaded in 300 ms from Cloudflare + Supabase" or "… from Apps Script".
 `EDGE_OFF` on the Worker sends calls back to Apps Script: a function name
-(`getAllPatients`), a comma-separated list, or `all`. (`EDGE_LEDGER = off`
-still works for the ledger.)
+(`getAllPatients`), a comma-separated list, `writes` (every save made in
+Supabase), `runner`, or `all`. (`EDGE_LEDGER = off` still works for the ledger.)
 
 ### The migration badge (temporary)
 
@@ -105,6 +105,23 @@ Google-only service, a tab or setting not copied, a session it does not know)
 comes back as a reason, and Apps Script answers as before; the badge shows
 "(app code)" for its answers and the reason otherwise. `EDGE_OFF=runner` sends
 all of them back to Apps Script; a function's own name sends that one back.
+
+**Saves made in Supabase (Phase W).** Bookings, check-ins, appointment status
+and time, patients' profiles and allergies, the OP consultation (with its
+referrals, templates and bundles) and Hospital Billing's bills, payments,
+cancellations and payment modes (`WRITER` in `src/runner.js`, 26 saves) go to
+the Edge Function too. It runs the app's own save on the copy and commits all
+its writes in one go, and the Worker then asks Apps Script to write them into
+the Sheet (`drainSoon`). Every call the Worker passes to Apps Script while a
+save is still waiting carries `"drain": true`, so Apps Script writes it in
+first. A save sent with a call id whose answer is lost is closed in the log by
+that id (`recover`): either it was made and the log's answer is given, or it
+can no longer be made and Apps Script makes it. A save the Edge Function cannot
+make exactly (a row deleted, a password set) is refused with nothing written,
+and Apps Script makes it, copied as before. `EDGE_OFF=writes` sends every save
+back to Apps Script; the badge says "saved in Supabase" for the others. The
+proof that each leaves the Sheet as Apps Script would is the MIGRATION repo's
+`tools/edgewrites.js`.
 
 **Fresh after a change.** Every write of those screens copies what it changed
 before answering (`FLUSH_AFTER`; with `watch` when it edits older rows in

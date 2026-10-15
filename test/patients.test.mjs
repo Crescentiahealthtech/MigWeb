@@ -65,6 +65,7 @@ function network({ auditFails = false, patients = PATIENTS } = {}) {
       });
       return Response.json({ results });
     }
+    if (url.endsWith('/rpc/edge_writes')) return Response.json({ n: 0 });          // no save made in Supabase waiting
     throw new Error('unexpected fetch ' + url);
   };
   return log;
