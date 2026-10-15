@@ -179,9 +179,12 @@ export const FLUSH_AFTER = {
   labCancelPendingOrder: { sheets: ['LAB_BILLING', 'LAB_ORDERS'], watch: true },
   settleLabBillBalance: { sheets: ['LAB_BILLING', LEDGER, AUDIT], watch: true },
   saveLabResultsDraft: { sheets: ['LAB_RESULTS', 'LAB_ORDERS'], watch: true },
-  submitLabResults: { sheets: ['LAB_RESULTS', 'LAB_ORDERS'], watch: true },
-  verifyLabResults: { sheets: ['LAB_RESULTS', 'LAB_ORDERS', 'LAB_TAT_LOG'], watch: true },
-  labAcknowledgeCritical: { sheets: ['LAB_RESULTS'], watch: true },
+  // A critical value logged (LAB_CRITICAL_COMMS) goes with them: the lab's list of values to acknowledge reads it.
+  submitLabResults: { sheets: ['LAB_RESULTS', 'LAB_ORDERS', 'LAB_CRITICAL_COMMS'], watch: true },
+  verifyLabResults: { sheets: ['LAB_RESULTS', 'LAB_ORDERS', 'LAB_TAT_LOG', 'LAB_CRITICAL_COMMS'], watch: true },
+  // An acknowledgement edits rows in place anywhere in the (short) log: its last 600 rows re-checked,
+  // or the list the lab reloads from the copy still shows the values just acknowledged.
+  labAcknowledgeCritical: { sheets: ['LAB_CRITICAL_COMMS', 'LAB_RESULTS'], window: 600 },
   // The catalogue is short and edited anywhere in it: all of it re-checked.
   saveCatalogEntry: { sheets: ['LAB_TEST_CATALOG'], window: 600 },
   savePanelWithParameters: { sheets: ['LAB_TEST_CATALOG'], window: 600 },
