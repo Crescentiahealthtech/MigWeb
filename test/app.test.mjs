@@ -206,3 +206,26 @@ test('the page comes from the edge at once, and one older than a few seconds is 
   assert.match(third, /abc122/);
   assert.equal(fetched, 2, 'a fresh copy is not fetched again');
 });
+
+test('Google\'s sign-in page just after a deploy: the call is tried once more; another page of Google\'s is not', async () => {
+  globalThis.caches = { default: { match: async () => undefined, put: async () => {} } };
+  let n = 0;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/rest/v1/rpc/edge_writes')) return Response.json({ n: 0 });
+    n++;
+    return n === 1 ? new Response('<html><head><title>Sign in - Google Accounts</title></head><a href="https://accounts.google.com/ServiceLogin">x</a></html>', { headers: { 'content-type': 'text/html' } })
+                   : Response.json({ ok: true, v: 'saved' });
+  };
+  const r = await worker.fetch(new Request('https://migweb.example/rpc', { method: 'POST', body: '{"fn":"saveSomething","args":[]}' }), env(), ctx);
+  assert.equal(n, 2);
+  assert.deepEqual(await r.json(), { ok: true, v: 'saved' });
+  n = 0;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/rest/v1/rpc/edge_writes')) return Response.json({ n: 0 });
+    n++;
+    return new Response('<html><title>Error</title>Exceeded maximum execution time <a href="https://accounts.google.com/">help</a></html>', { status: 500, headers: { 'content-type': 'text/html' } });
+  };
+  const r2 = await worker.fetch(new Request('https://migweb.example/rpc', { method: 'POST', body: '{"fn":"saveSomething","args":[]}' }), env(), ctx);
+  assert.equal(n, 1, 'an error page is not retried: the save may have run');
+  assert.equal(r2.status, 502);
+});
