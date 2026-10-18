@@ -182,3 +182,27 @@ test('the app page carries the migration badge, and /api/migration lists what ha
   const none = await (await worker.fetch(new Request('https://migweb.example/api/migration'), env({ EDGE_OFF: 'all' }), ctx)).json();
   assert.equal(none.screens.filter((s) => s.done).length, 0);
 });
+
+test('the page comes from the edge at once, and one older than a few seconds is fetched again behind it', async () => {
+  const store = new Map(), waits = [];
+  globalThis.caches = { default: { match: async (k) => store.get(k.url), put: async (k, r) => { store.set(k.url, r.clone()); } } };
+  let fetched = 0;
+  globalThis.fetch = async (url) => {
+    if (/\?shell=1$/.test(String(url))) { fetched++; return new Response('<html><head></head><script>window.CRESC_BUILD=\'abc12' + fetched + '\';</script></html>'); }
+    return Response.json({});
+  };
+  const c = { waitUntil: (p) => waits.push(p) };
+  const first = await (await worker.fetch(new Request('https://migweb.example/'), env(), c)).text();
+  assert.equal(fetched, 1);
+  assert.match(first, /abc121/);
+  // Stored a minute ago: served as it is, the new one fetched in the background.
+  const old = store.get('https://migweb.example/__shell__');
+  store.set('https://migweb.example/__shell__', new Response(await old.text(), { headers: { 'X-Shell-At': String(Date.now() - 60000) } }));
+  const second = await (await worker.fetch(new Request('https://migweb.example/'), env(), c)).text();
+  assert.match(second, /abc121/);
+  await Promise.all(waits);
+  assert.equal(fetched, 2);
+  const third = await (await worker.fetch(new Request('https://migweb.example/'), env(), c)).text();
+  assert.match(third, /abc122/);
+  assert.equal(fetched, 2, 'a fresh copy is not fetched again');
+});
