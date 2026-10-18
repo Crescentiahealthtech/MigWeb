@@ -24,5 +24,17 @@
   // and ALLOWED_EMAILS are set once in the
   // dashboard (Settings → Variables and Secrets) or with `npx wrangler secret
   // put NAME`; they are never in this file. See README.md.
-  "keep_vars": true
+  "keep_vars": true,
+  // Preview builds (every branch but main, e.g. a pull request's): Cloudflare
+  // refuses to build one without this block. A preview sends every call to
+  // Apps Script (EDGE_OFF=all) and, given no Supabase key, never calls
+  // Supabase, so it touches no data of its own.
+  "previews": {
+    "vars": {
+      "SUPABASE_URL": "https://bzjwdpxygozgdwpdzixr.supabase.co",
+      "SUPABASE_REGION": "ap-south-1",
+      "FIREBASE_PROJECT_ID": "cresrxdemo",
+      "EDGE_OFF": "all"
+    }
+  }
 }
