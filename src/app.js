@@ -396,10 +396,27 @@ export function withFlush(bytes, spec) {
 async function forward(env, body, why) {
   const extra = why ? { 'X-CresRx-Why': String(why).replace(/[^\x20-\x7e]/g, '').slice(0, 160) } : {};
   let res;
+  // Apps Script answers a POST with a redirect to the result; fetch follows
+  // it (as a GET, which is what Google expects).
+  const call = () => fetch(execUrl(env), { method: 'POST', body, headers: { 'Content-Type': 'application/json' }, redirect: 'follow' });
+  // Google's sign-in page itself (not any page of Google's: its error pages
+  // carry a sign-in link too).
+  const SIGN_IN = /ServiceLogin|accounts\.google\.com\/(?:v3\/)?signin|<title>[^<]*sign in/i;
+  let early = null;
   try {
-    // Apps Script answers a POST with a redirect to the result; fetch
-    // follows it (as a GET, which is what Google expects).
-    res = await fetch(execUrl(env), { method: 'POST', body, headers: { 'Content-Type': 'application/json' }, redirect: 'follow' });
+    res = await call();
+    // Just after a new version is deployed Google can answer for a moment
+    // with its sign-in page instead of running the script: the call was not
+    // made, so it is tried once more a second later. (Any other page is not
+    // retried: a save may have run.)
+    if (!/json/i.test(res.headers.get('Content-Type') || '')) {
+      early = await res.text();
+      if (!/^\s*\{/.test(early) && SIGN_IN.test(early)) {
+        await new Promise((r) => setTimeout(r, 1000));
+        res = await call();
+        early = null;
+      }
+    }
   } catch (e) {
     return json({ ok: false, e: 'The app server could not be reached. Please try again.' }, 502);
   }
@@ -409,11 +426,11 @@ async function forward(env, body, why) {
     return new Response(res.body, { status: 200, headers: secure(Object.assign({ 'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store', 'X-CresRx-Source': 'apps-script' }, extra)) });
   }
-  const out = await res.text();
+  const out = early !== null ? early : await res.text();
   if (/^\s*\{/.test(out)) {
     return new Response(out, { status: 200, headers: secure(Object.assign({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-CresRx-Source': 'apps-script' }, extra)) });
   }
-  return json({ ok: false, e: /accounts\.google\.com|ServiceLogin|signin/i.test(out)
+  return json({ ok: false, e: SIGN_IN.test(out)
     ? 'The app server asks for a Google sign-in: set the deployment\'s access to "Anyone" and deploy again.'
     : 'The app server gave no answer (deploy the latest version of the app). Status ' + res.status + '.' }, 502);
 }
