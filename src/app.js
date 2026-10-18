@@ -59,7 +59,13 @@ import { Unsure, myPermissions, touchSession, pickerQuery, doctorPicker, profile
          slotsDay, slotsQuery, doctorSlots, scheduleQuery, doctorSchedule } from './signin.js';
 import { RUNNER, WRITER, viaRunner, viaSaver, savesWaiting, warmRunner } from './runner.js';
 
-const SHELL_EDGE_SECONDS = 20;
+// The page is kept at the edge for a week and served from there at once; one
+// older than SHELL_FRESH_SECONDS is fetched again in the background, so the
+// next visitor has the new one (the app's own build check offers a reload
+// when a newer build is deployed). Before, it was kept 20 s, and the first
+// visitor after that waited for Apps Script to build it (about 5 s).
+const SHELL_FRESH_SECONDS = 20;
+const SHELL_KEEP_SECONDS = 7 * 24 * 3600;
 const IDENTITY_MEMO_MS = 15 * 1000;            // a session looked up in Supabase, remembered by this instance
 const IDENTITY_REFRESH_MS = 10 * 60 * 1000;    // stored longer ago than this: Apps Script re-checks it, in the background
 const MAX_RPC_BYTES = 20 * 1024 * 1024;
@@ -803,21 +809,28 @@ export async function shell(request, env, ctx) {
   const fresh = url.searchParams.has('v');
   const cache = caches.default;
   const key = new Request(url.origin + '/__shell__', { method: 'GET' });
-  let html = '';
-  if (!fresh) {
-    const hit = await cache.match(key);
-    if (hit) html = await hit.text();
-  }
-  if (!html) {
+  const load = async () => {
     try {
       const r = await fetch(exec + '?shell=1', { redirect: 'follow' });
       const t = await r.text();
       if (r.ok && /<html/i.test(t) && /CRESC_BUILD/.test(t)) {
-        html = t;
-        ctx.waitUntil(cache.put(key, new Response(t, { headers: { 'Cache-Control': 'public, max-age=' + SHELL_EDGE_SECONDS } })));
+        await cache.put(key, new Response(t, { headers: { 'Cache-Control': 'public, max-age=' + SHELL_KEEP_SECONDS,
+                                                          'X-Shell-At': String(Date.now()) } }));
+        return t;
       }
     } catch (e) { /* fall back below */ }
+    return '';
+  };
+  let html = '';
+  if (!fresh) {
+    const hit = await cache.match(key);
+    if (hit) {
+      html = await hit.text();
+      const at = Number(hit.headers.get('X-Shell-At') || 0);
+      if (!at || Date.now() - at > SHELL_FRESH_SECONDS * 1000) ctx.waitUntil(load());
+    }
   }
+  if (!html) html = await load();
   if (!html) {
     // The deployment is not ready for it (older code, or access not
     // "Anyone"): the app in Google's frame, as before, rather than nothing.
