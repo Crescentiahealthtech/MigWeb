@@ -69,7 +69,11 @@ export const RUNNER = new Set([
   // The last reads that need no Google service: the disposal register, the
   // access overview, the privacy console.
   'getDisposalLog', 'crescGetAccessOverview', 'crescUserAdminScope', 'dpdpConsentQueue', 'dpdpConsoleSnapshot',
-  'dpdpBreachNotice'
+  'dpdpBreachNotice',
+  // The Master Ledger a page at a time, with the totals of every match;
+  // Operations: the day summary (its sign-in figures stay with Apps Script:
+  // Audit_Log, getDaySignIns) and the backups' log and schedule.
+  'getMasterLedger', 'getDaySummary', 'getBackupStatus'
 ]);
 
 /**
@@ -217,7 +221,7 @@ export const WARM = {
             'getOpenAdmissions', 'getRunningTab', 'getShiftState'],
   pharmacy: ['fetchBillableStock', 'getPatientBillingContext', 'getPharmacyDashboard', 'getPharmacyStockList',
              'fetchPharmacyInventory', 'getPendingCreditBills', 'getStockAlerts', 'getShiftState'],
-  accounts: ['getAccountsDashboard', 'getFinanceDashboard', 'getAllDrawerStates', 'getShiftState', 'getReceivables'],
+  accounts: ['getAccountsDashboard', 'getFinanceDashboard', 'getAllDrawerStates', 'getShiftState', 'getReceivables', 'getMasterLedger'],
   'emr-notes': ['getActiveIPAdmissionsForNotes', 'getIPNotesBundle', 'getIPTimeline', 'getIPDiabeticChart'],
   'emr-op': ['getComposerContext', 'getLastVisitRecall', 'fetchOPDrugMaster', 'listConsultTemplates'],
   'emr-ward': ['getActiveIPWard', 'getWardBedBoard', 'getBedStatuses', 'getIPHistory'],

@@ -218,7 +218,9 @@ export const FLUSH_AFTER = {
   raiseDPDPRequest: ['DPDP_Requests'], dpdpVerifyRequester: { sheets: ['DPDP_Requests'], watch: true },
   closeDPDPRequest: { sheets: ['DPDP_Requests'], watch: true }, dpdpRaiseBreach: ['Breach_Register'],
   dpdpAssessBreach: { sheets: ['Breach_Register'], watch: true }, recordDispatchConsent: { sheets: ['Consent_Register', 'Patients'], watch: true },
-  dpdpBackfillConsent: { sheets: ['Consent_Register', 'Patients'], watch: true }, markReminderSent: ['Reminder_Log']
+  dpdpBackfillConsent: { sheets: ['Consent_Register', 'Patients'], watch: true }, markReminderSent: ['Reminder_Log'],
+  // A backup taken from Operations (Drive: Apps Script's): its line in the log, for the Backups tab's reload.
+  runBackupNow: ['Backup_Log']
 };
 
 /**
@@ -947,7 +949,9 @@ export const MIGRATION_SCREENS = [
   { label: 'Command Center (every load, Refresh included)', fns: ['getDashboardData'], day: 'Day 2' },
   { label: 'Finance Hub: Master Ledger, dashboard, receivables, drawers, payables, expenses, GST, audit, insurance, IP charges and discharge (the app\'s own code on Supabase)',
     fns: ['getAccountsDashboard', 'getFinanceDashboard', 'getReceivables', 'getAllDrawerStates', 'getShiftState', 'getPayables',
-          'getExpenseRegister', 'getTaxSummary', 'getAuditLog', 'getInsuranceClaims', 'getOpenAdmissions', 'getRunningTab'], day: 'Day 3' },
+          'getExpenseRegister', 'getTaxSummary', 'getAuditLog', 'getInsuranceClaims', 'getOpenAdmissions', 'getRunningTab', 'getMasterLedger'], day: 'Day 3' },
+  { label: 'Operations: the day summary (its sign-in figures from Apps Script) and the backups\' log and schedule (the app\'s own code on Supabase); taking a backup and emailing the summary stay with Apps Script',
+    fns: ['getDaySummary', 'getBackupStatus'], day: 'Day 6c' },
   { label: 'IP Notes: patient list, opening a patient, timeline, care team, investigations, printed notes', fns: ['getActiveIPAdmissionsForNotes', 'getIPNotesBundle', 'getIPTimeline', 'getIPLabResults', 'getIPNotesPrintHtml'], day: 'Day 3' },
   { label: 'OP consultation: composer, last visit, allergies, templates, drug and test lists, safety check, doses, printed prescription', fns: ['getComposerContext', 'getLastVisitRecall', 'getPatientAllergies', 'fetchOPDrugMaster', 'checkRxSafety', 'suggestPaediatricDose', 'getOPPrescriptionHtml'], day: 'Day 3' },
   { label: 'Hospital Billing: patient lookup, the billing ledger, reprints, orders to bill, IP bill status, draft bill, advance receipts; the lab\'s billing ledger; the IP ledger (the app\'s own code on Supabase)',
