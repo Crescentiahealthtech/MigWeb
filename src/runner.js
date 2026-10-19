@@ -50,7 +50,7 @@ export const RUNNER = new Set([
   'previewPackSizes', 'previewScheduleClassification', 'getSupplierReturns', 'getSupplierReturnStock', 'getSupplierReturnPrint',
   'getSupplierCredit', 'getSupplierCreditReport',
   // Smart reorder: the plan and the draft orders (Pharmacy_Reorder.gs).
-  'getReorderPlan', 'getPurchaseOrders', 'getPurchaseOrder',
+  'getReorderPlan', 'getPurchaseOrders', 'getPurchaseOrder', 'getReorderLevels',
   // Day 6: the lab (queues, orders, result entry, collection, labels, catalogue,
   // new requests, reports, bills, billing, cancelled, critical values), the IP
   // case sheet, the discharge desk, the patient portal, consent, barcodes
@@ -69,7 +69,13 @@ export const RUNNER = new Set([
   // The last reads that need no Google service: the disposal register, the
   // access overview, the privacy console.
   'getDisposalLog', 'crescGetAccessOverview', 'crescUserAdminScope', 'dpdpConsentQueue', 'dpdpConsoleSnapshot',
-  'dpdpBreachNotice'
+  'dpdpBreachNotice',
+  // The Master Ledger a page at a time, with the totals of every match;
+  // Operations: the day summary (its sign-in figures stay with Apps Script:
+  // Audit_Log, getDaySignIns) and the backups' log and schedule.
+  'getMasterLedger', 'getDaySummary', 'getBackupStatus',
+  // The claim tracker, as a ledger: a page of claims with the whole set's totals, one claim opened.
+  'getClaimTracker', 'getClaimDetail'
 ]);
 
 /**
@@ -127,7 +133,14 @@ export const WRITER = new Set([
   // Group K: the privacy console (data requests, breaches, consent asked as a
   // document is sent, consent backfilled), a reminder marked sent
   'raiseDPDPRequest', 'dpdpVerifyRequester', 'closeDPDPRequest', 'dpdpRaiseBreach', 'dpdpAssessBreach', 'recordDispatchConsent',
-  'markReminderSent', 'dpdpBackfillConsent'
+  'markReminderSent', 'dpdpBackfillConsent',
+  // The claim tracker: a stage moved, a document ticked, a reminder noted (sent
+  // from the desk's own WhatsApp or mail), an insurer's contact, the time limits
+  'moveClaimStage', 'tickClaimDocument', 'chaseClaim', 'saveInsurerContact', 'saveClaimSla',
+  // Group G, the pharmacy's reorder (Pharmacy_Reorder.gs): a medicine's level,
+  // a supplier's lead time, the defaults, a draft order and its status. The
+  // order e-mailed as a PDF (emailPurchaseOrder) stays with Apps Script.
+  'saveReorderSetting', 'saveSupplierReorderSetting', 'saveReorderConfig', 'createPurchaseOrderDraft', 'setPurchaseOrderStatus'
 ]);
 
 /**
@@ -216,8 +229,8 @@ export const WARM = {
   billing: ['hb_getBootstrap', 'hb_getPatientContext', 'hb_getInvoices', 'hb_listOpenOrders', 'getIpBillingStatus',
             'getOpenAdmissions', 'getRunningTab', 'getShiftState'],
   pharmacy: ['fetchBillableStock', 'getPatientBillingContext', 'getPharmacyDashboard', 'getPharmacyStockList',
-             'fetchPharmacyInventory', 'getPendingCreditBills', 'getStockAlerts', 'getShiftState'],
-  accounts: ['getAccountsDashboard', 'getFinanceDashboard', 'getAllDrawerStates', 'getShiftState', 'getReceivables'],
+             'fetchPharmacyInventory', 'getPendingCreditBills', 'getStockAlerts', 'getShiftState', 'getReorderLevels'],
+  accounts: ['getAccountsDashboard', 'getFinanceDashboard', 'getAllDrawerStates', 'getShiftState', 'getReceivables', 'getMasterLedger'],
   'emr-notes': ['getActiveIPAdmissionsForNotes', 'getIPNotesBundle', 'getIPTimeline', 'getIPDiabeticChart'],
   'emr-op': ['getComposerContext', 'getLastVisitRecall', 'fetchOPDrugMaster', 'listConsultTemplates'],
   'emr-ward': ['getActiveIPWard', 'getWardBedBoard', 'getBedStatuses', 'getIPHistory'],

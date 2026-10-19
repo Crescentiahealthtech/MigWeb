@@ -213,11 +213,15 @@ test('EDGE_OFF=writes (or the save\'s name) sends saves to Apps Script, reads st
   assert.deepEqual(JSON.parse(new TextDecoder().decode(withDrain(b))), { fn: 'x', args: [{ a: '}' }], flush: ['T'], drain: true });
 });
 
-test('the saves the Worker sends are groups A-K, none a read; the ones that need what never leaves Google are not among them', () => {
+test('the saves the Worker sends are groups A-K and the claim tracker\'s, none a read; the ones that need what never leaves Google are not among them', () => {
   for (const fn of WRITER) assert.ok(!RUNNER.has(fn) && FLUSH_AFTER[fn], fn + ' copies as before if Apps Script makes it');
   for (const fn of ['crescChangePassword', 'crescAdminResetPassword', 'ds_sign', 'declareVisitingConsultant', 'endVisitingConsultant', 'lockFinancialPeriod']) assert.ok(!WRITER.has(fn), fn);
   for (const fn of ['registerPatient', 'deletePhraseTemplate', 'saveIPNote', 'settleDischarge', 'processPharmacyBill', 'collectLabSample', 'ds_initiateDischarge', 'recordConsent']) assert.ok(WRITER.has(fn), fn);
-  assert.equal(WRITER.size, 131);
+  for (const fn of ['moveClaimStage', 'tickClaimDocument', 'chaseClaim', 'saveInsurerContact', 'saveClaimSla']) assert.ok(WRITER.has(fn), fn);
+  for (const fn of ['getClaimTracker', 'getClaimDetail']) assert.ok(RUNNER.has(fn), fn);
+  assert.equal(WRITER.size, 141);
+  for (const fn of ['saveReorderSetting', 'saveSupplierReorderSetting', 'saveReorderConfig', 'createPurchaseOrderDraft', 'setPurchaseOrderStatus']) assert.ok(WRITER.has(fn), fn);
+  assert.ok(!WRITER.has('emailPurchaseOrder'), 'emailPurchaseOrder: a PDF e-mailed, Apps Script\'s');
 });
 
 test('an admitted patient\'s timeline, which the Worker\'s own port leaves, goes to the Edge Function before Apps Script', async () => {
