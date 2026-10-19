@@ -7,7 +7,7 @@ the [MIGRATION](https://github.com/Crescentiahealthtech/MIGRATION) repo).
 
 | Path          | What                                                        |
 |---------------|-------------------------------------------------------------|
-| `/`           | **the whole app**, its page fetched from Apps Script and served from here (no Google frame) |
+| `/`           | **the whole app**, its page made by the Edge Function from the app's own files (Apps Script's when it cannot) and served from here (no Google frame) |
 | `/rpc`        | every server call the app makes: to Apps Script, **except the reads moved here, answered from Supabase** (sign-in calls, Daily Ledger, booking slots, Patients, Command Center; the Finance Hub, IP Notes and the OP consultation through the Edge Function; the tables below) |
 | `/ledger/`    | a stand-alone read-only ledger with Google sign-in          |
 | `/api/ledger` | its data: `GET ?date=yyyy-MM-dd&doctor=DOC001`              |
@@ -69,7 +69,7 @@ through unread; only answers the Worker builds itself are parsed.
 | `getUserProfile` | `src/signin.js` | any session; a patient only their own | — |
 | `crescGetMyPermissions`, `crescTouchSession` | `src/signin.js`, from the stored session | a live session | — |
 | `getDoctorPickerContext`, `getDoctorSlotsForDate`, `getDoctorSchedule` | `src/signin.js` | doctor scope | — |
-| `crescGetBundle`, `getAppBuild`, `getDPDPNotice` | stored by Apps Script in Supabase (bundles per build of the page, from the `cresrx_build` cookie the page is served with), re-read in the background every few minutes | none, as in Apps Script | — |
+| `crescGetBundle`, `getAppBuild`, `getDPDPNotice`, `getClinicProfile` | made by the Edge Function from its own .gs and .html files (see "Nothing every page asks comes from Apps Script" below); for a page Apps Script made, the copy it stored in Supabase | none, as in Apps Script | — |
 
 An audited read is recorded in Supabase (`edge_log_read`) before the answer
 goes back, and reaches the `Audit_Log` sheet with the next minute's sync; if
@@ -129,6 +129,36 @@ place). Writes on screens not moved yet that change what these screens show —
 pharmacy, lab and hospital bills, the ward's case sheet and discharge summary —
 are copied just after their answer, on a call of their own, so nobody waits
 for it (`FLUSH_SOON`). Everything else arrives with the minute's sync.
+
+## Nothing every page asks comes from Apps Script
+
+The page itself, the screen bundles (`crescGetBundle`), the build check
+(`getAppBuild`), the consent notice (`getDPDPNotice`) and the letterhead
+(`getClinicProfile`) are made by the Edge Function from the same commit's
+.gs and .html files (`runner.js` `PUBLIC`, `viaShell`): the app's own
+`cresc_shellHtml_`, `crescGetBundle` and the rest, run with no session.
+Before, they were copies Apps Script left in Supabase, so the first opening
+of each screen after a new build went to Apps Script (up to 39 s), and every
+copy was re-read from Apps Script every few minutes.
+
+- **The page** (`shell()`): from the Edge Function (`{fn: "__shell"}`), kept
+  at the edge as before, with where it came from and its build
+  (`X-Shell-From`, `X-Shell-Build`). Apps Script's `?shell=1` when the Edge
+  Function cannot make it, or with `EDGE_OFF=shell`.
+- **A bundle**: the Edge Function's, when the page asking is of its build
+  (`X-CresRx-Shell-Build` against the `cresrx_build` cookie); a page Apps
+  Script made gets the copy stored for its build, as before.
+- **The build check**: the Edge Function's while the page served here is the
+  one it made, so an open page is never told of a build it would not get.
+- `EDGE_OFF=runner` (or a function's name) brings back the stored copies and
+  Apps Script.
+
+What still goes to Apps Script, and why (51 calls: e-mail, PDFs and Drive;
+passwords and authenticator secrets; the Sessions tab; the audit viewer; three
+settings saves; Apps Script's own cache and triggers; the label printer's key;
+workbook setup; two reads of registers the minute sync does not keep):
+MIGRATION `docs/supabase/PLAN_OFF_APPS_SCRIPT.md` §5m, with the 6 reads and 8
+saves moved in the same round.
 
 ## Two repositories, two ways of deploying
 
@@ -228,7 +258,7 @@ npm test
 - `src/patients.js` — the patient register, demographics, timeline
 - `src/signin.js` — permissions, the doctor picker, a patient's profile, booking slots and weekly hours
 - `src/snapshots.js` — stored answers (Command Center), and switched-off cards taken out
-- `src/runner.js` — the reads the Edge Function answers with the app's own code (Day 3)
+- `src/runner.js` — the reads and saves the Edge Function makes with the app's own code (Day 3, Phase W), and what every page asks with no session (the page, bundles, build check, notice, letterhead)
 - `public/ledger/index.html` — the page
 - `public/vendor/firebase-10.7.1/` — Firebase sign-in SDK, served from here
 - `test/` — offline checks (`npm test`)

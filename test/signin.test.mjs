@@ -65,7 +65,7 @@ const SESS = {
 
 let seq = 0;
 /** Stand-ins for Apps Script and Supabase. `stored`: tokens whose session Supabase holds, and how old. */
-function network({ stored = {}, snapshots = {} } = {}) {
+function network({ stored = {}, snapshots = {}, edge = {} } = {}) {
   const log = { apps: [], sb: [], waits: [] };
   globalThis.caches = { default: { match: async () => undefined, put: async () => {} } };
   const byHash = {};
@@ -79,7 +79,13 @@ function network({ stored = {}, snapshots = {} } = {}) {
       if (body.fn === 'getEdgeIdentity') return Response.json({ ok: true, v: SESS[String(body.args[0]).replace(/\d+$/, '')] || { success: false } });
       return Response.json({ ok: true, v: { from: 'apps-script', fn: body.fn, args: body.args } });
     }
-    if (url.includes('/functions/v1/cresrx-reads')) { (log.edge = log.edge || []).push(body); return Response.json({ tabs: 3, loaded: 3, reused: 0, ms: 9 }); }
+    if (url.includes('/functions/v1/cresrx-reads')) {
+      (log.edge = log.edge || []).push(body);
+      // `edge`: the Edge Function's answers by name; the page and the calls with no session are refused unless given.
+      if (edge[body.fn]) return edge[body.fn](body);
+      if (body.fn === '__warm') return Response.json({ tabs: 3, loaded: 3, reused: 0, ms: 9 });
+      return new Response('{"fallback":"test"}', { status: 409, headers: { 'x-cresrx-why': 'not in this test' } });
+    }
     const fn = url.split('/rpc/')[1];
     log.sb.push(fn);
     const j = (v) => new Response(JSON.stringify(v), { headers: { 'content-type': 'application/json' } });
@@ -273,12 +279,12 @@ test('a screen opening asks the Edge Function to load the tabs its reads need, o
   const headers = { cookie: 'cresrx_build=a1b2c3d4e5f6' };
   assert.equal((await call('crescGetBundle', ['pharmacy'], ctx, { headers })).source, 'supabase');
   await settle();
-  assert.equal(log.edge.length, 1);
-  assert.equal(log.edge[0].fn, '__warm');
-  assert.ok(log.edge[0].args.includes('fetchBillableStock') && log.edge[0].args.includes('getPharmacyDashboard'));
+  const warms = () => log.edge.filter((b) => b.fn === '__warm');
+  assert.equal(warms().length, 1);
+  assert.ok(warms()[0].args.includes('fetchBillableStock') && warms()[0].args.includes('getPharmacyDashboard'));
   await call('crescGetBundle', ['pharmacy'], ctx, { headers });   // again within the minute: not asked again
   await settle();
-  assert.equal(log.edge.length, 1);
+  assert.equal(warms().length, 1);
   // Switched off with the reads: no warm-up either.
   const off = network({ snapshots: { 'bundle:a1b2c3d4e5f6:billing': { data, age: 1000 } } });
   await call('crescGetBundle', ['billing'], off.ctx, { headers, e: env({ EDGE_OFF: 'runner' }) });
@@ -296,3 +302,83 @@ test('the letterhead for printouts comes from its stored copy; without one, Apps
   assert.equal(r.source, 'apps-script');
   assert.equal(r.why, 'not stored yet');
 });
+
+// ---- the calls every page makes with no session, and the page, from the Edge Function --------------
+
+const EDGE_BUILD = 'e1e2e3e4e5e6';
+const edgeAnswer = (v, build = EDGE_BUILD) => () => new Response(JSON.stringify({ ok: true, v }),
+  { headers: { 'content-type': 'application/json', 'x-cresrx-shell-build': build, 'x-cresrx-ms': '4' } });
+const edgeShell = (build = EDGE_BUILD) => () => new Response("<html><head></head><script>window.CRESC_BUILD = '" + build + "';</script>edge</html>",
+  { headers: { 'content-type': 'text/html', 'x-cresrx-shell-build': build } });
+
+test('the page comes from the Edge Function, made from its own files; Apps Script\'s when it cannot, or with EDGE_OFF=shell', async () => {
+  const store = new Map();
+  const cache = () => { globalThis.caches = { default: { match: async (k) => store.get(k.url), put: async (k, r) => { store.set(k.url, r.clone()); } } }; };
+  let { log, ctx } = network({ edge: { __shell: edgeShell() } });
+  cache();
+  let page = await worker.fetch(new Request('https://migweb.example/'), env(), ctx);
+  assert.match(await page.text(), /edge<\/html>/);
+  assert.match(page.headers.get('set-cookie'), /^cresrx_build=e1e2e3e4e5e6;/);
+  assert.deepEqual(log.apps, []);
+  const kept = store.get('https://migweb.example/__shell__');
+  assert.deepEqual([kept.headers.get('x-shell-from'), kept.headers.get('x-shell-build')], ['edge', EDGE_BUILD]);
+  // Refused: Apps Script's page, as before.
+  store.clear();
+  ({ log, ctx } = network());
+  cache();
+  page = await worker.fetch(new Request('https://migweb.example/'), env(), ctx);
+  assert.match(page.headers.get('set-cookie'), /^cresrx_build=a1b2c3d4e5f6;/);
+  assert.equal(store.get('https://migweb.example/__shell__').headers.get('x-shell-from'), 'apps-script');
+  // Switched off: the Edge Function is not asked.
+  store.clear();
+  ({ log, ctx } = network({ edge: { __shell: edgeShell() } }));
+  cache();
+  page = await worker.fetch(new Request('https://migweb.example/'), env({ EDGE_OFF: 'shell' }), ctx);
+  assert.match(page.headers.get('set-cookie'), /^cresrx_build=a1b2c3d4e5f6;/);
+  assert.equal((log.edge || []).filter((b) => b.fn === '__shell').length, 0);
+});
+
+test('a screen bundle from the Edge Function for a page of its build: no Apps Script, no stored copy', async () => {
+  const data = { success: true, name: 'patients', html: '<div>edge</div>', message: '' };
+  let { log, ctx } = network({ edge: { crescGetBundle: edgeAnswer(data) } });
+  let r = await call('crescGetBundle', ['patients'], ctx, { headers: { cookie: 'cresrx_build=' + EDGE_BUILD } });
+  assert.deepEqual([r.source, r.v], ['supabase', data]);
+  assert.deepEqual(log.apps, []);
+  assert.ok(!log.sb.includes('snapshot_get'));
+  assert.deepEqual(log.edge.find((b) => b.fn === 'crescGetBundle'), { fn: 'crescGetBundle', args: ['patients'] });
+  // A page without the cookie: the Edge Function's (the build served now).
+  r = await call('crescGetBundle', ['patients'], ctx);
+  assert.deepEqual([r.source, r.v], ['supabase', data]);
+  // A page Apps Script made (another build): its stored copy, never the Edge Function's markup.
+  const old = { success: true, name: 'patients', html: '<div>old</div>', message: '' };
+  ({ log, ctx } = network({ edge: { crescGetBundle: edgeAnswer(data) }, snapshots: { 'bundle:a1b2c3d4e5f6:patients': { data: old, age: 1000 } } }));
+  r = await call('crescGetBundle', ['patients'], ctx, { headers: { cookie: 'cresrx_build=a1b2c3d4e5f6' } });
+  assert.deepEqual([r.source, r.v], ['supabase', old]);
+  // EDGE_OFF=runner: the stored copy, as before (EDGE_OFF=crescGetBundle sends it to Apps Script altogether).
+  ({ log, ctx } = network({ edge: { crescGetBundle: edgeAnswer(data) }, snapshots: { 'bundle:e1e2e3e4e5e6:patients': { data: old, age: 1000 } } }));
+  r = await call('crescGetBundle', ['patients'], ctx, { headers: { cookie: 'cresrx_build=' + EDGE_BUILD }, e: env({ EDGE_OFF: 'runner' }) });
+  assert.deepEqual(r.v, old);
+  assert.equal((log.edge || []).filter((b) => b.fn === 'crescGetBundle').length, 0);
+});
+
+test('the build check, the consent notice and the letterhead from the Edge Function; the stored copies when it cannot', async () => {
+  const build = { success: true, build: EDGE_BUILD, url: 'https://clinic.example' };
+  const notice = { success: true, version: 'v1', fiduciary: 'DEMO CLINIC' };
+  const clinic = { success: true, clinic: { name: 'DEMO CLINIC' }, message: '' };
+  let { log, ctx } = network({ edge: { getAppBuild: edgeAnswer(build), getDPDPNotice: edgeAnswer(notice), getClinicProfile: edgeAnswer(clinic) } });
+  for (const [fn, v] of [['getAppBuild', build], ['getDPDPNotice', notice], ['getClinicProfile', clinic]]) {
+    assert.deepEqual(await call(fn, [], ctx), { source: 'supabase', why: null, age: null, v }, fn);
+  }
+  assert.deepEqual(log.apps, []);
+  assert.ok(!log.sb.includes('snapshot_get'));
+  // The page this Worker serves came from Apps Script, of another build: the build check is Apps Script's stored one,
+  // so an open page is not told of a build it would not be given.
+  const stored = { success: true, build: 'a1b2c3d4e5f6', url: '' };
+  ({ log, ctx } = network({ edge: { getAppBuild: edgeAnswer(build) }, snapshots: { build: { data: stored, age: 1000 } } }));
+  globalThis.caches = { default: { match: async () => new Response('<html>', { headers: { 'X-Shell-From': 'apps-script', 'X-Shell-Build': 'a1b2c3d4e5f6' } }), put: async () => {} } };
+  assert.deepEqual((await call('getAppBuild', [], ctx)).v, stored);
+  // The Edge Function refuses: the stored copies, as before.
+  ({ log, ctx } = network({ snapshots: { 'dpdp:notice': { data: notice, age: 1000 } } }));
+  assert.deepEqual(await call('getDPDPNotice', [], ctx), { source: 'supabase', why: null, age: '1', v: notice });
+});
+

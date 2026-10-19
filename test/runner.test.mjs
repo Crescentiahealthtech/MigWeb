@@ -96,7 +96,9 @@ test('saves kept with Apps Script never go to the Edge Function; each copies wha
     assert.equal(r.headers.get('x-cresrx-why'), 'a write: Appointments.deleteRow');
   }
   // Every read served is a read (get…, list…, fetch…, check…, search…, preview…, suggest…, build…, lookup…, a print, …Eligibility).
-  for (const fn of RUNNER) assert.match(fn, /^(hb_|mc|ds_)?(get|Get|list|fetch|check|search|preview|suggest|build|lookup|verify|resolve|portal|labList)|^mtPrint|Eligibility$/, fn);
+  // Named otherwise and reads all the same (MIGRATION tools/sbmirror.js runs each): the access overview, the
+  // administrator's scope, the privacy console's consent queue, summary and breach notice.
+  for (const fn of RUNNER) assert.match(fn, /^(hb_|mc|ds_)?(get|Get|list|fetch|check|search|preview|suggest|build|lookup|verify|resolve|portal|labList)|^mtPrint|Eligibility$|^(crescGetAccessOverview|crescUserAdminScope|dpdpConsentQueue|dpdpConsoleSnapshot|dpdpBreachNotice)$/, fn);
 });
 
 test('a write listed to copy in the background is copied just after its answer (none is, since Day 6)', async () => {
@@ -211,11 +213,11 @@ test('EDGE_OFF=writes (or the save\'s name) sends saves to Apps Script, reads st
   assert.deepEqual(JSON.parse(new TextDecoder().decode(withDrain(b))), { fn: 'x', args: [{ a: '}' }], flush: ['T'], drain: true });
 });
 
-test('the saves the Worker sends are groups A-J, none a read; the ones that need what never leaves Google are not among them', () => {
+test('the saves the Worker sends are groups A-K, none a read; the ones that need what never leaves Google are not among them', () => {
   for (const fn of WRITER) assert.ok(!RUNNER.has(fn) && FLUSH_AFTER[fn], fn + ' copies as before if Apps Script makes it');
   for (const fn of ['crescChangePassword', 'crescAdminResetPassword', 'ds_sign', 'declareVisitingConsultant', 'endVisitingConsultant', 'lockFinancialPeriod']) assert.ok(!WRITER.has(fn), fn);
   for (const fn of ['registerPatient', 'deletePhraseTemplate', 'saveIPNote', 'settleDischarge', 'processPharmacyBill', 'collectLabSample', 'ds_initiateDischarge', 'recordConsent']) assert.ok(WRITER.has(fn), fn);
-  assert.equal(WRITER.size, 123);
+  assert.equal(WRITER.size, 131);
 });
 
 test('an admitted patient\'s timeline, which the Worker\'s own port leaves, goes to the Edge Function before Apps Script', async () => {
