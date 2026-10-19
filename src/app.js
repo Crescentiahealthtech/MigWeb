@@ -165,6 +165,11 @@ export const FLUSH_AFTER = {
   discardPharmacyStock: { sheets: ['Pharmacy_Inventory', 'Pharmacy_Disposal_Log', 'Pharmacy_Master', LEDGER, AUDIT], watch: true },
   applyPackSizes: { sheets: ['Pharmacy_Inventory', 'Pharmacy_Master'], watch: true },
   applyScheduleClassification: { sheets: ['Pharmacy_Inventory'], watch: true },
+  // The reorder (Pharmacy_Reorder.gs): each save marks the one row it writes
+  // (a medicine's level, a supplier, the defaults, an order).
+  saveReorderSetting: { sheets: ['Pharmacy_Reorder_Settings'], window: 0 }, saveSupplierReorderSetting: { sheets: ['Pharmacy_Reorder_Settings'], window: 0 },
+  saveReorderConfig: { sheets: ['Pharmacy_Reorder_Settings'], window: 0 },
+  createPurchaseOrderDraft: { sheets: ['Pharmacy_Purchase_Orders'], window: 0 }, setPurchaseOrderStatus: { sheets: ['Pharmacy_Purchase_Orders'], window: 0 },
   // The ward (Day 4b): an admission, a bed's status.
   updateBedStatusInDB: { sheets: ['Master_Beds', 'IP_Admissions'], watch: true },
   // IP charts (Day 4b).
@@ -992,6 +997,9 @@ export const MIGRATION_SCREENS = [
     fns: ['recordLedgerEntry', 'openShift', 'closeShift', 'recordPayable', 'payPayable', 'createManualClaim', 'addIpCharge', 'collectIpAdvance', 'settleDischarge'], day: 'Phase W' },
   { label: 'Saves, group G: the pharmacy — bills, returns, purchases, stock, supplier returns',
     fns: ['processPharmacyBill', 'processPharmacyReturn', 'savePharmacyPurchase', 'updatePharmacyStock', 'createSupplierReturn'], day: 'Phase W' },
+  { label: 'Pharmacy reorder: what to order, draft orders, each medicine\'s level (Live Inventory\'s low-stock count too); its saves — a level, a supplier\'s lead time, the defaults, a draft order and its status (made in Supabase, in the Sheet seconds later; e-mailing an order stays with Apps Script)',
+    fns: ['getReorderPlan', 'getPurchaseOrders', 'getPurchaseOrder', 'getReorderLevels', 'saveReorderSetting', 'saveSupplierReorderSetting',
+          'saveReorderConfig', 'createPurchaseOrderDraft', 'setPurchaseOrderStatus'], day: 'Phase W' },
   { label: 'Saves, group H: the lab — orders, bills, samples, results, verification, catalogue, outside reports',
     fns: ['createLabRequest', 'generateLabBill', 'collectLabSample', 'saveLabResultsDraft', 'verifyLabResults', 'saveCatalogEntry', 'saveExternalLabResult'], day: 'Phase W' },
   { label: 'Saves, groups I and J: discharge summaries (not the signature), mother & child, consent, nominees',

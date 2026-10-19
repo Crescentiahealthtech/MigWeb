@@ -50,7 +50,7 @@ export const RUNNER = new Set([
   'previewPackSizes', 'previewScheduleClassification', 'getSupplierReturns', 'getSupplierReturnStock', 'getSupplierReturnPrint',
   'getSupplierCredit', 'getSupplierCreditReport',
   // Smart reorder: the plan and the draft orders (Pharmacy_Reorder.gs).
-  'getReorderPlan', 'getPurchaseOrders', 'getPurchaseOrder',
+  'getReorderPlan', 'getPurchaseOrders', 'getPurchaseOrder', 'getReorderLevels',
   // Day 6: the lab (queues, orders, result entry, collection, labels, catalogue,
   // new requests, reports, bills, billing, cancelled, critical values), the IP
   // case sheet, the discharge desk, the patient portal, consent, barcodes
@@ -136,7 +136,11 @@ export const WRITER = new Set([
   'markReminderSent', 'dpdpBackfillConsent',
   // The claim tracker: a stage moved, a document ticked, a reminder noted (sent
   // from the desk's own WhatsApp or mail), an insurer's contact, the time limits
-  'moveClaimStage', 'tickClaimDocument', 'chaseClaim', 'saveInsurerContact', 'saveClaimSla'
+  'moveClaimStage', 'tickClaimDocument', 'chaseClaim', 'saveInsurerContact', 'saveClaimSla',
+  // Group G, the pharmacy's reorder (Pharmacy_Reorder.gs): a medicine's level,
+  // a supplier's lead time, the defaults, a draft order and its status. The
+  // order e-mailed as a PDF (emailPurchaseOrder) stays with Apps Script.
+  'saveReorderSetting', 'saveSupplierReorderSetting', 'saveReorderConfig', 'createPurchaseOrderDraft', 'setPurchaseOrderStatus'
 ]);
 
 /**
@@ -225,7 +229,7 @@ export const WARM = {
   billing: ['hb_getBootstrap', 'hb_getPatientContext', 'hb_getInvoices', 'hb_listOpenOrders', 'getIpBillingStatus',
             'getOpenAdmissions', 'getRunningTab', 'getShiftState'],
   pharmacy: ['fetchBillableStock', 'getPatientBillingContext', 'getPharmacyDashboard', 'getPharmacyStockList',
-             'fetchPharmacyInventory', 'getPendingCreditBills', 'getStockAlerts', 'getShiftState'],
+             'fetchPharmacyInventory', 'getPendingCreditBills', 'getStockAlerts', 'getShiftState', 'getReorderLevels'],
   accounts: ['getAccountsDashboard', 'getFinanceDashboard', 'getAllDrawerStates', 'getShiftState', 'getReceivables', 'getMasterLedger'],
   'emr-notes': ['getActiveIPAdmissionsForNotes', 'getIPNotesBundle', 'getIPTimeline', 'getIPDiabeticChart'],
   'emr-op': ['getComposerContext', 'getLastVisitRecall', 'fetchOPDrugMaster', 'listConsultTemplates'],
