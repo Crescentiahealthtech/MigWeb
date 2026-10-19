@@ -57,7 +57,7 @@ import { registerQuery, allPatients, masterDirectory, demographicsQuery, demogra
          patientKey } from './patients.js';
 import { Unsure, myPermissions, touchSession, pickerQuery, doctorPicker, profileQuery, userProfile,
          slotsDay, slotsQuery, doctorSlots, scheduleQuery, doctorSchedule } from './signin.js';
-import { RUNNER, WRITER, viaRunner, viaSaver, savesWaiting, warmRunner } from './runner.js';
+import { RUNNER, WRITER, PUBLIC, viaRunner, viaSaver, savesWaiting, warmRunner, viaShell } from './runner.js';
 
 // The page is kept at the edge for a week and served from there at once; one
 // older than SHELL_FRESH_SECONDS is fetched again in the background, so the
@@ -212,7 +212,13 @@ export const FLUSH_AFTER = {
   ds_cancel: { sheets: ['DS_Summaries', 'DS_Workflow_Log', 'IP_Admissions'], watch: true },
   // Consent and nominees (the patient portal and the privacy console).
   recordConsent: { sheets: ['Consent_Register', 'Patients'], watch: true }, withdrawConsent: { sheets: ['Consent_Register'], watch: true },
-  recordNomination: ['Nomination_Register'], revokeNomination: { sheets: ['Nomination_Register'], watch: true }
+  recordNomination: ['Nomination_Register'], revokeNomination: { sheets: ['Nomination_Register'], watch: true },
+  // The privacy console (group K): data requests, breaches, consent asked as a
+  // document is sent or backfilled; a reminder marked sent.
+  raiseDPDPRequest: ['DPDP_Requests'], dpdpVerifyRequester: { sheets: ['DPDP_Requests'], watch: true },
+  closeDPDPRequest: { sheets: ['DPDP_Requests'], watch: true }, dpdpRaiseBreach: ['Breach_Register'],
+  dpdpAssessBreach: { sheets: ['Breach_Register'], watch: true }, recordDispatchConsent: { sheets: ['Consent_Register', 'Patients'], watch: true },
+  dpdpBackfillConsent: { sheets: ['Consent_Register', 'Patients'], watch: true }, markReminderSent: ['Reminder_Log']
 };
 
 /**
@@ -692,26 +698,65 @@ function pageBuild(request) {
 }
 
 /**
+ * One of the calls every page makes with no session (runner.js PUBLIC),
+ * answered by the Edge Function from its own .gs and .html files: no Apps
+ * Script, and nothing stored to go stale. `fits(res)`: whether its answer
+ * suits this page (its build). null when it cannot answer, or it does not
+ * fit: the stored copy, then Apps Script, as before.
+ */
+async function fromEdge(env, fn, args, fits) {
+  if (!PUBLIC.has(fn) || !edgeOn(env, fn) || !edgeOn(env, 'runner')) return null;
+  const r = await viaRunner(env, new TextEncoder().encode(JSON.stringify({ fn, args })));
+  if (!(r instanceof Response)) return null;
+  if (fits && !fits(r)) {
+    try { if (r.body) await r.body.cancel(); } catch (e) { /* nothing to read */ }
+    return null;
+  }
+  return new Response(r.body, { status: 200, headers: secure({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
+    'X-CresRx-Source': 'supabase', 'X-CresRx-Via': 'app code on Supabase', 'X-CresRx-Ms': r.headers.get('X-CresRx-Ms') || '' }) });
+}
+
+/**
  * crescGetBundle(name) — Module_Loader.gs. A screen's markup, the same for
- * everyone on one deployment: kept in Supabase per build of the page and per
- * bundle, re-read from Apps Script every few minutes while in use. The first
- * person on a new build gets it from Apps Script, which stores it.
+ * everyone on one deployment: made by the Edge Function from the same .html
+ * files its page was made from (when the page's build is the Edge Function's
+ * build — every page this Worker serves from it). A page Apps Script made
+ * (another build): the copy kept in Supabase per build of the page and per
+ * bundle, re-read from Apps Script every few minutes while in use; the first
+ * person on such a build gets it from Apps Script, which stores it.
  */
 async function bundle([name], env, ctx, supabase, request) {
   const n = String(name || '').trim();
+  if (!/^[a-z][a-z0-9-]{0,39}$/.test(n)) throw new Unsure('an unusual bundle name');
+  // The screen opening will read these tabs next: the Edge Function loads them now.
+  if (edgeOn(env, 'runner')) later(ctx, 'warm ' + n, warmRunner(env, n));
+  const mine = pageBuild(request);
+  const made = await fromEdge(env, 'crescGetBundle', [n], (r) => !mine || r.headers.get('X-CresRx-Shell-Build') === mine);
+  if (made) return made;
   // The page's build (its cookie), else the build deployed now (the build
   // check Apps Script stores): a page open in a tab longer than its cookie
   // lives still gets its screens from here. Apps Script serves the deployed
   // build's markup whatever build the page is, so it is the same answer.
-  const build = pageBuild(request) || await deployedBuild(supabase);
+  const build = mine || await deployedBuild(supabase);
   if (!build) throw new Unsure('the page\'s build is not known');
-  if (!/^[a-z][a-z0-9-]{0,39}$/.test(n)) throw new Unsure('an unusual bundle name');
-  // The screen opening will read these tabs next: the Edge Function loads them now.
-  if (edgeOn(env, 'runner')) later(ctx, 'warm ' + n, warmRunner(env, n));
   const hit = await stored('bundle:' + build + ':' + n, BUNDLE_FRESH_MS,
     () => appsScriptQuietly(env, 'crescGetBundle', [n, build]), ctx, supabase, plain);
   if (hit) return hit;
   return forward(env, new TextEncoder().encode(JSON.stringify({ fn: 'crescGetBundle', args: [n, build] })), 'not stored yet');
+}
+
+/**
+ * The page this Worker serves now, as its cache holds it: where it was made
+ * ('edge' or 'apps-script') and its build; null when this place has none.
+ */
+async function servedShell(request) {
+  try {
+    const hit = await caches.default.match(new Request(new URL(request.url).origin + '/__shell__', { method: 'GET' }));
+    if (!hit) return null;
+    const out = { from: hit.headers.get('X-Shell-From') || 'apps-script', build: hit.headers.get('X-Shell-Build') || '' };
+    try { if (hit.body) await hit.body.cancel(); } catch (e) { /* not read */ }
+    return out;
+  } catch (e) { return null; }
 }
 
 /** The build deployed now, as Apps Script last stored it (getAppBuild), or ''. */
@@ -764,15 +809,23 @@ export const EDGE = {
   // crescGetBundle(name) — Module_Loader.gs
   crescGetBundle: bundle,
   // getClinicProfile() — Clinic_Profile.gs (no session: the letterhead printed
-  // on every bill), from the copy Apps Script leaves; re-read every 10 minutes.
-  getClinicProfile: async (args, env, ctx, sb) => (await stored('clinic', CLINIC_FRESH_MS,
-    () => appsScriptQuietly(env, 'getClinicProfile', []), ctx, sb, plain)) || notYet(),
-  // getAppBuild() — App_Version.gs (no session: the build every visitor is sent)
-  getAppBuild: async (args, env, ctx, sb) => (await stored('build', BUILD_FRESH_MS,
-    () => appsScriptQuietly(env, 'getAppBuild', []), ctx, sb, plain)) || notYet(),
-  // getDPDPNotice() — DPDP_Compliance.gs (no session: the notice every patient is shown)
-  getDPDPNotice: async (args, env, ctx, sb) => (await stored('dpdp:notice', NOTICE_FRESH_MS,
-    () => appsScriptQuietly(env, 'getDPDPNotice', []), ctx, sb, plain)) || notYet(),
+  // on every bill), made by the Edge Function from the settings copy; else
+  // the copy Apps Script leaves, re-read every 10 minutes.
+  getClinicProfile: async (args, env, ctx, sb) => (await fromEdge(env, 'getClinicProfile', [])) ||
+    (await stored('clinic', CLINIC_FRESH_MS, () => appsScriptQuietly(env, 'getClinicProfile', []), ctx, sb, plain)) || notYet(),
+  // getAppBuild() — App_Version.gs (no session: the build every visitor is
+  // sent). The Edge Function's, while the page this Worker serves is the one
+  // it made (or one of the same build); else the copy Apps Script leaves.
+  getAppBuild: async (args, env, ctx, sb, request) => {
+    const page = await servedShell(request);
+    const made = await fromEdge(env, 'getAppBuild', [], (r) => !page || page.from === 'edge' ||
+      page.build === r.headers.get('X-CresRx-Shell-Build'));
+    return made || (await stored('build', BUILD_FRESH_MS, () => appsScriptQuietly(env, 'getAppBuild', []), ctx, sb, plain)) || notYet();
+  },
+  // getDPDPNotice() — DPDP_Compliance.gs (no session: the notice every patient
+  // is shown), made by the Edge Function; else the copy Apps Script leaves.
+  getDPDPNotice: async (args, env, ctx, sb) => (await fromEdge(env, 'getDPDPNotice', [])) ||
+    (await stored('dpdp:notice', NOTICE_FRESH_MS, () => appsScriptQuietly(env, 'getDPDPNotice', []), ctx, sb, plain)) || notYet(),
 
   // Booking: a doctor's slots for a day, and weekly hours — Doctor_Schedule_Engine.gs
   getDoctorSlotsForDate: async ([doctorId, dateStr, token], env, ctx, sb) => {
@@ -826,15 +879,24 @@ export async function shell(request, env, ctx) {
   const fresh = url.searchParams.has('v');
   const cache = caches.default;
   const key = new Request(url.origin + '/__shell__', { method: 'GET' });
+  // The page made by the Edge Function from its own files (the same commit
+  // as its reads, saves and screen bundles); Apps Script's (?shell=1) when it
+  // cannot, or with EDGE_OFF=shell.
+  const keepShell = async (t, from) => {
+    const b = /window\.CRESC_BUILD\s*=\s*'([0-9a-f]{6,32})'/.exec(t);
+    await cache.put(key, new Response(t, { headers: { 'Cache-Control': 'public, max-age=' + SHELL_KEEP_SECONDS,
+                                                      'X-Shell-At': String(Date.now()), 'X-Shell-From': from, 'X-Shell-Build': b ? b[1] : '' } }));
+    return t;
+  };
   const load = async () => {
+    if (edgeOn(env, 'shell') && edgeOn(env, 'runner')) {
+      const made = await viaShell(env);
+      if (made && /<html/i.test(made.html) && made.html.indexOf("window.CRESC_BUILD = '" + made.build + "'") !== -1) return keepShell(made.html, 'edge');
+    }
     try {
       const r = await fetch(exec + '?shell=1', { redirect: 'follow' });
       const t = await r.text();
-      if (r.ok && /<html/i.test(t) && /CRESC_BUILD/.test(t)) {
-        await cache.put(key, new Response(t, { headers: { 'Cache-Control': 'public, max-age=' + SHELL_KEEP_SECONDS,
-                                                          'X-Shell-At': String(Date.now()) } }));
-        return t;
-      }
+      if (r.ok && /<html/i.test(t) && /CRESC_BUILD/.test(t)) return keepShell(t, 'apps-script');
     } catch (e) { /* fall back below */ }
     return '';
   };
@@ -875,7 +937,7 @@ export async function shell(request, env, ctx) {
  */
 export const MIGRATION_SCREENS = [
   { label: 'Sign-in: permissions, "stay signed in", the doctor picker', fns: ['crescGetMyPermissions', 'crescTouchSession', 'getDoctorPickerContext'], day: 'Day 2' },
-  { label: 'Every screen: its bundle, the build check', fns: ['crescGetBundle', 'getAppBuild'], day: 'Day 2' },
+  { label: 'Every screen: its bundle, the build check, the page itself (made by the Edge Function from the app\'s own files)', fns: ['crescGetBundle', 'getAppBuild'], day: 'Day 2, 6c' },
   { label: 'Appointments · Daily Ledger', fns: ['fetchDailyLedgerScoped'], day: 'Day 0' },
   { label: 'Appointments · booking: slots, weekly hours, patient details', fns: ['getDoctorSlotsForDate', 'getDoctorSchedule', 'getPatientDemographics'], day: 'Day 2' },
   { label: 'Patients · search list and profile', fns: ['getAllPatients', 'getUserProfile'], day: 'Day 1–2' },
@@ -901,7 +963,9 @@ export const MIGRATION_SCREENS = [
     fns: ['getLabWorkspaceData', 'getLabOrderPanel', 'buildResultEntrySheet', 'getLabCatalog', 'getLabReportHtml', 'getLabBillingWorkspace', 'searchLabRecords'], day: 'Day 6' },
   { label: 'Discharge desk, IP case sheet, admitted patients\' timelines, patient portal, consent, barcodes (the app\'s own code on Supabase)',
     fns: ['ds_getQueue', 'ds_getSummary', 'getIPCasesheetContext', 'buildLongitudinalTimeline', 'portalHome', 'getConsentStatus', 'resolveScan'], day: 'Day 6' },
-  { label: 'Sign-in itself (password, authenticator code), account admin, label printing — Apps Script', fns: [], day: 'stays' },
+  { label: 'Pharmacy disposal register; Command Center access overview; privacy console: consent queue, summary, breach notice (the app\'s own code on Supabase)',
+    fns: ['getDisposalLog', 'crescGetAccessOverview', 'crescUserAdminScope', 'dpdpConsentQueue', 'dpdpConsoleSnapshot', 'dpdpBreachNotice'], day: 'Day 6c' },
+  { label: 'Sign-in itself (password, authenticator code), staff accounts and authenticator status, the audit viewer, label printing — Apps Script', fns: [], day: 'stays' },
   { label: 'Saves, group A: bookings, check-ins, appointment status and time, patients\' profiles and allergies (made in Supabase, in the Sheet seconds later)',
     fns: ['submitNewAppointment', 'bookAppointmentScoped', 'updateAppointmentStatus', 'setAppointmentTime', 'barcodeUpdateAppointment',
           'portalBookAppointment', 'updatePatientProfile', 'savePatientAllergies'], day: 'Phase W' },
@@ -921,7 +985,9 @@ export const MIGRATION_SCREENS = [
     fns: ['createLabRequest', 'generateLabBill', 'collectLabSample', 'saveLabResultsDraft', 'verifyLabResults', 'saveCatalogEntry', 'saveExternalLabResult'], day: 'Phase W' },
   { label: 'Saves, groups I and J: discharge summaries (not the signature), mother & child, consent, nominees',
     fns: ['ds_initiateDischarge', 'ds_saveWorking', 'ds_submit', 'mcOpenAntenatal', 'mcRecordImmunisation', 'recordConsent', 'recordNomination'], day: 'Phase W' },
-  { label: 'Saves that stay with Apps Script: passwords changed or reset, a summary signed, a visiting consultant\'s session, a month locked; PDFs, Drive, e-mail with attachments',
+  { label: 'Saves, group K: the privacy console — data requests, breaches, consent asked or backfilled; a reminder marked sent',
+    fns: ['raiseDPDPRequest', 'dpdpVerifyRequester', 'closeDPDPRequest', 'dpdpRaiseBreach', 'dpdpAssessBreach', 'recordDispatchConsent', 'markReminderSent', 'dpdpBackfillConsent'], day: 'Day 6c' },
+  { label: 'Saves that stay with Apps Script: passwords changed or reset, a summary signed, a visiting consultant\'s session, a month locked, a setting changed; PDFs, Drive, e-mail with attachments',
     fns: [], day: 'stays' }
 ];
 export function migrationStatus(env) {

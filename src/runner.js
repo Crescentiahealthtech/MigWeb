@@ -63,7 +63,11 @@ export const RUNNER = new Set([
   // The clinical timeline: the Worker answers outpatients itself (src/app.js);
   // an admitted patient's, which it leaves, goes here before Apps Script.
   'buildLongitudinalTimeline',
-  'getUsernameMappingReport', 'getEncounterForPrint'
+  'getUsernameMappingReport', 'getEncounterForPrint',
+  // The last reads that need no Google service: the disposal register, the
+  // access overview, the privacy console.
+  'getDisposalLog', 'crescGetAccessOverview', 'crescUserAdminScope', 'dpdpConsentQueue', 'dpdpConsoleSnapshot',
+  'dpdpBreachNotice'
 ]);
 
 /**
@@ -117,8 +121,23 @@ export const WRITER = new Set([
   'ds_cancel',
   // Group J: mother & child, consent, nominees
   'mcOpenAntenatal', 'mcCloseAntenatal', 'mcRecordAntenatalVisit', 'mcRecordImmunisation', 'mcMarkDoseNotGiven', 'recordConsent',
-  'withdrawConsent', 'recordNomination', 'revokeNomination'
+  'withdrawConsent', 'recordNomination', 'revokeNomination',
+  // Group K: the privacy console (data requests, breaches, consent asked as a
+  // document is sent, consent backfilled), a reminder marked sent
+  'raiseDPDPRequest', 'dpdpVerifyRequester', 'closeDPDPRequest', 'dpdpRaiseBreach', 'dpdpAssessBreach', 'recordDispatchConsent',
+  'markReminderSent', 'dpdpBackfillConsent'
 ]);
+
+/**
+ * What every page asks with no session (served.json "public"): a screen's
+ * bundle, the build check, the consent notice, the letterhead. The Edge
+ * Function makes them from its own .gs and .html files (the same commit as
+ * its reads), so Apps Script is not asked for them; src/app.js serves its
+ * answer first and keeps the stored copy and Apps Script only for when it
+ * cannot. Its answers carry the build of the page it serves
+ * (X-CresRx-Shell-Build, see viaShell).
+ */
+export const PUBLIC = new Set(['crescGetBundle', 'getAppBuild', 'getDPDPNotice', 'getClinicProfile']);
 
 const fnUrl = (env) => String(env.SUPABASE_URL).replace(/\/+$/, '') + '/functions/v1/cresrx-reads';
 const restUrl = (env, fn) => String(env.SUPABASE_URL).replace(/\/+$/, '') + '/rest/v1/rpc/' + fn;
@@ -246,4 +265,24 @@ export async function viaRunner(env, bytes) {
     (res.status === 404 ? 'the reads service is not deployed' : 'the reads service answered ' + res.status);
   try { if (res.body) await res.body.cancel(); } catch (e) { /* nothing to read */ }
   return { why };
+}
+
+/**
+ * The app's page from the Edge Function ({fn: "__shell"}): Index.html as
+ * Apps Script's ?shell=1 gives it, made from the Edge Function's own files.
+ * Its text and build, or null (Apps Script's page is used instead).
+ */
+export async function viaShell(env) {
+  if (!env.SUPABASE_URL || !env.SUPABASE_SECRET_KEY) return null;
+  try {
+    const headers = { apikey: env.SUPABASE_SECRET_KEY, 'Content-Type': 'application/json' };
+    if (env.SUPABASE_REGION) headers['x-region'] = String(env.SUPABASE_REGION);
+    const res = await fetch(fnUrl(env), { method: 'POST', body: '{"fn":"__shell","args":[]}', headers });
+    const build = res.headers.get('X-CresRx-Shell-Build') || '';
+    if (res.status !== 200 || !/^[0-9a-f]{6,32}$/.test(build)) {
+      try { if (res.body) await res.body.cancel(); } catch (e) { /* nothing to read */ }
+      return null;
+    }
+    return { html: await res.text(), build };
+  } catch (e) { return null; }
 }
