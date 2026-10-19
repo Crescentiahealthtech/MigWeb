@@ -49,6 +49,8 @@ export const RUNNER = new Set([
   'getPurchaseLookups', 'getPharmacyBatchHistory', 'getStockAdjustReasons', 'getDisposalReasons', 'suggestDrugSchedule',
   'previewPackSizes', 'previewScheduleClassification', 'getSupplierReturns', 'getSupplierReturnStock', 'getSupplierReturnPrint',
   'getSupplierCredit', 'getSupplierCreditReport',
+  // Smart reorder: the plan and the draft orders (Pharmacy_Reorder.gs).
+  'getReorderPlan', 'getPurchaseOrders', 'getPurchaseOrder',
   // Day 6: the lab (queues, orders, result entry, collection, labels, catalogue,
   // new requests, reports, bills, billing, cancelled, critical values), the IP
   // case sheet, the discharge desk, the patient portal, consent, barcodes
