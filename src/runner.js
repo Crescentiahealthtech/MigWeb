@@ -73,7 +73,9 @@ export const RUNNER = new Set([
   // The Master Ledger a page at a time, with the totals of every match;
   // Operations: the day summary (its sign-in figures stay with Apps Script:
   // Audit_Log, getDaySignIns) and the backups' log and schedule.
-  'getMasterLedger', 'getDaySummary', 'getBackupStatus'
+  'getMasterLedger', 'getDaySummary', 'getBackupStatus',
+  // The claim tracker, as a ledger: a page of claims with the whole set's totals, one claim opened.
+  'getClaimTracker', 'getClaimDetail'
 ]);
 
 /**
@@ -131,7 +133,10 @@ export const WRITER = new Set([
   // Group K: the privacy console (data requests, breaches, consent asked as a
   // document is sent, consent backfilled), a reminder marked sent
   'raiseDPDPRequest', 'dpdpVerifyRequester', 'closeDPDPRequest', 'dpdpRaiseBreach', 'dpdpAssessBreach', 'recordDispatchConsent',
-  'markReminderSent', 'dpdpBackfillConsent'
+  'markReminderSent', 'dpdpBackfillConsent',
+  // The claim tracker: a stage moved, a document ticked, a reminder noted (sent
+  // from the desk's own WhatsApp or mail), an insurer's contact, the time limits
+  'moveClaimStage', 'tickClaimDocument', 'chaseClaim', 'saveInsurerContact', 'saveClaimSla'
 ]);
 
 /**

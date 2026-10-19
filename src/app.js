@@ -109,6 +109,11 @@ export const FLUSH_AFTER = {
   recordPayable: ['Accounts_Payable', LEDGER, AUDIT], payPayable: { sheets: ['Accounts_Payable', LEDGER, AUDIT], watch: true },
   createManualClaim: ['Insurance_Claims_Ledger', AUDIT], updateClaim: { sheets: ['Insurance_Claims_Ledger', AUDIT], watch: true },
   settleClaim: { sheets: ['Insurance_Claims_Ledger', 'IP_Settlements', LEDGER, AUDIT], watch: true },
+  // The claim tracker: a claim's stage, documents and reminders are edited in place.
+  moveClaimStage: { sheets: ['Insurance_Claims_Ledger', AUDIT], watch: true },
+  tickClaimDocument: { sheets: ['Insurance_Claims_Ledger', AUDIT], watch: true },
+  chaseClaim: { sheets: ['Insurance_Claims_Ledger', AUDIT], watch: true },
+  saveInsurerContact: { sheets: ['Insurers_Master', AUDIT], watch: true }, saveClaimSla: { sheets: ['Claim_Stage_Timers', AUDIT], watch: true },
   addIpCharge: ['IP_Charges', AUDIT], addIpCharges: ['IP_Charges', AUDIT], billChargeToIp: ['IP_Charges', AUDIT],
   editIpCharge: { sheets: ['IP_Charges', AUDIT], watch: true }, voidIpCharge: { sheets: ['IP_Charges', AUDIT], watch: true },
   markIpChargePaidAtCounter: { sheets: ['IP_Charges', AUDIT], watch: true },
@@ -969,6 +974,8 @@ export const MIGRATION_SCREENS = [
     fns: ['ds_getQueue', 'ds_getSummary', 'getIPCasesheetContext', 'buildLongitudinalTimeline', 'portalHome', 'getConsentStatus', 'resolveScan'], day: 'Day 6' },
   { label: 'Pharmacy disposal register; Command Center access overview; privacy console: consent queue, summary, breach notice (the app\'s own code on Supabase)',
     fns: ['getDisposalLog', 'crescGetAccessOverview', 'crescUserAdminScope', 'dpdpConsentQueue', 'dpdpConsoleSnapshot', 'dpdpBreachNotice'], day: 'Day 6c' },
+  { label: 'Finance Hub · claim tracker: the ledger a page at a time, one claim opened (the app\'s own code on Supabase)',
+    fns: ['getClaimTracker', 'getClaimDetail'], day: 'Claims' },
   { label: 'Sign-in itself (password, authenticator code), staff accounts and authenticator status, the audit viewer, label printing — Apps Script', fns: [], day: 'stays' },
   { label: 'Saves, group A: bookings, check-ins, appointment status and time, patients\' profiles and allergies (made in Supabase, in the Sheet seconds later)',
     fns: ['submitNewAppointment', 'bookAppointmentScoped', 'updateAppointmentStatus', 'setAppointmentTime', 'barcodeUpdateAppointment',
@@ -991,6 +998,8 @@ export const MIGRATION_SCREENS = [
     fns: ['ds_initiateDischarge', 'ds_saveWorking', 'ds_submit', 'mcOpenAntenatal', 'mcRecordImmunisation', 'recordConsent', 'recordNomination'], day: 'Phase W' },
   { label: 'Saves, group K: the privacy console — data requests, breaches, consent asked or backfilled; a reminder marked sent',
     fns: ['raiseDPDPRequest', 'dpdpVerifyRequester', 'closeDPDPRequest', 'dpdpRaiseBreach', 'dpdpAssessBreach', 'recordDispatchConsent', 'markReminderSent', 'dpdpBackfillConsent'], day: 'Day 6c' },
+  { label: 'Saves, the claim tracker: a stage moved, a document ticked, a reminder noted, an insurer\'s contact, the time limits',
+    fns: ['moveClaimStage', 'tickClaimDocument', 'chaseClaim', 'saveInsurerContact', 'saveClaimSla'], day: 'Claims' },
   { label: 'Saves that stay with Apps Script: passwords changed or reset, a summary signed, a visiting consultant\'s session, a month locked, a setting changed; PDFs, Drive, e-mail with attachments',
     fns: [], day: 'stays' }
 ];
