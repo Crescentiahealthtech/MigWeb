@@ -76,6 +76,36 @@ function fmtIST(d, pattern) {
     .replace('hh', p2(h12)).replace('mm', p2(t.getUTCMinutes())).replace(/\ba\b/, h < 12 ? 'AM' : 'PM');
 }
 
+/** yyyy-MM-dd in the clinic's zone (Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd")). */
+function ymdIST(d) {
+  const t = new Date(d.getTime() + IST_MS), p2 = (n) => (n < 10 ? '0' : '') + n;
+  return t.getUTCFullYear() + '-' + p2(t.getUTCMonth() + 1) + '-' + p2(t.getUTCDate());
+}
+
+/** op_parsePaedExam_ (OP_Database_Engine.gs): Paed_Exam back to an object; null when empty or unreadable. */
+function parsePaed(raw) {
+  if (!raw) return null;
+  try { const o = JSON.parse(raw); return (o && typeof o === 'object') ? o : null; } catch (e) { return null; }
+}
+
+/** op_paedExamRows_ (OP_Database_Engine.gs): the paediatric examination as [label, text] rows, in examining order. */
+function paedRows(px) {
+  if (!px || typeof px !== 'object') return [];
+  const t = (k) => String(px[k] === undefined || px[k] === null ? '' : px[k]).trim();
+  const rows = [];
+  if (Array.isArray(px.danger) && px.danger.length) rows.push(['Danger signs', px.danger.join(', ')]);
+  const anthro = [];
+  if (t('hc')) anthro.push('HC ' + t('hc') + ' cm');
+  if (t('chest')) anthro.push('Chest ' + t('chest') + ' cm');
+  if (t('hcr')) anthro.push('Head : chest ' + t('hcr'));
+  if (t('muac')) anthro.push('MUAC ' + t('muac') + ' cm');
+  if (anthro.length) rows.push(['Measurements', anthro.join(' \u00b7 ')]);
+  [['loc', 'Consciousness'], ['activity', 'Activity / interaction'], ['cry', 'Cry'],
+   ['posture', 'Posture'], ['moves', 'Spontaneous movements'], ['face', 'Facial expression'],
+   ['turgor', 'Skin turgor'], ['crt', 'Capillary refill']].forEach((f) => { if (t(f[0])) rows.push([f[1], t(f[0])]); });
+  return rows;
+}
+
 /** new Date(x) for a cell: a date cell is copied; text would be parsed in the script's zone, so not here. */
 function asDate(v) {
   if (isDate(v)) return new Date(v.getTime());
@@ -204,6 +234,8 @@ export function timeline([patients, op, ip], patientId) {
       if (text(pData[i][0]).trim().toUpperCase() === pIdUpper) {
         response.found = true;
         response.patient = { id: pData[i][0], name: pData[i][2], age: pData[i][3], sex: pData[i][4],
+                             // F: date of birth, for a child's age in years and months.
+                             dob: (isDate(pData[i][5]) && !isNaN(pData[i][5])) ? ymdIST(pData[i][5]) : String(pData[i][5] || ''),
                              mobile: pData[i][6], email: pData[i][16] || '' };
         break;
       }
@@ -231,11 +263,18 @@ export function timeline([patients, op, ip], patientId) {
         if (r[7]) vitalsObj.temp = r[7];
         if (r[8]) vitalsObj.weight = r[8];
         if (r[9]) vitalsObj.bmi = r[9];
+        // Appended columns, read by heading (op_ensureEncounterColumns_).
+        const byHead = (h) => { const c = headers.indexOf(h); if (c === -1) return ''; if (isDate(r[c])) unsure('a date in an appended column'); return String(r[c] || '').trim(); };
+        if (byHead('Height_Cm')) vitalsObj.height = byHead('Height_Cm');
+        if (byHead('Resp_Rate')) vitalsObj.rr = byHead('Resp_Rate');
+        const paedRaw = byHead('Paed_Exam');
+        const paedText = paedRows(parsePaed(paedRaw)).map((x) => x[0] + ': ' + x[1]).join('; ');
 
         const genExamObj = {};
         for (let c = 12; c <= 16; c++) if (r[c] && r[c] !== '') genExamObj[headers[c] || `GenExam_${c}`] = r[c];
         const sysExamObj = {};
         for (let c = 17; c <= 20; c++) if (r[c] && r[c] !== '') sysExamObj[headers[c] || `SysExam_${c}`] = r[c];
+        if (byHead('PV_Exam')) sysExamObj.PV = byHead('PV_Exam');   // appended column
 
         const rawFollowUp = r[25];
         let followUpStr = 'None';
@@ -256,7 +295,10 @@ export function timeline([patients, op, ip], patientId) {
           rx: r[22] || '[]',
           labs: r[23] || 'None',
           advice: r[24] || 'None',
-          followUp: followUpStr
+          followUp: followUpStr,
+          localExam: byHead('Local_Exam'),
+          paedExam: paedRaw,
+          paedText
         });
       }
     }
