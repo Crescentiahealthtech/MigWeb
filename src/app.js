@@ -179,6 +179,10 @@ export const FLUSH_AFTER = {
   // Mother & child, visiting consultants (Day 4b).
   mcOpenAntenatal: ['ANC_Register'], mcCloseAntenatal: { sheets: ['ANC_Register'], watch: true }, mcRecordAntenatalVisit: ['ANC_Visits', 'ANC_Register'],
   mcRecordImmunisation: ['Immunisation_Given'], mcMarkDoseNotGiven: ['Immunisation_Given'],
+  mcRecordScan: ['ANC_Scans'], mcVoidScan: { sheets: ['ANC_Scans'], watch: true }, mcRedateToScan: ['ANC_Register'],
+  mcRecordChecklist: ['ANC_Checklist'], mcVoidChecklist: { sheets: ['ANC_Checklist'], watch: true }, mcSetPicme: ['ANC_Register'],
+  mcRecordGrowth: ['Growth_Measurements'], mcVoidGrowth: { sheets: ['Growth_Measurements'], watch: true }, mcRecordMilestones: ['Milestone_Records'],
+  mcRecordUipUpToAge: ['Immunisation_Given'],
   declareVisitingConsultant: ['Visiting_Sessions', 'Doctors'], endVisitingConsultant: { sheets: ['Visiting_Sessions'], watch: true },
   // The lab (Day 6: its queues, bills and records are answered from the
   // copy). A request, a sample collected, received or rejected, results

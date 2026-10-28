@@ -38,6 +38,8 @@ export const RUNNER = new Set([
   // sessions on the sheet as it reads (a write), by their tokens (never copied).
   'getDoctorAvailabilityGrid', 'getStockAlerts', 'getPatientLabResults', 'getDoseReference', 'getVisitingConsultantState',
   'getExternalLabFormContext', 'getOutsideLabPrintHtml', 'mcGetAntenatal', 'mcGetImmunisation',
+  // The child's cards and the antenatal card's scans, checklist and register (Child_Growth.gs, Child_Development.gs, Antenatal_Plus.gs).
+  'mcGetGrowth', 'mcGetMilestones', 'mcGetAntenatalPlus', 'mcListOpenAntenatal', 'mcListVaccinesDue',
   'getMLCRecords', 'getMLCRegister', 'getMLCStatus', 'getMLCPrintHtml', 'getReminderQueue',
   'getActiveIPWard', 'getAvailableBedsByWard', 'getBedStatuses', 'getConsultantList', 'getWardBedBoard', 'getWardList',
   'fetchPatientForAdmit', 'getIPDiabeticChart', 'getOTForm', 'getOTPrintHtml', 'getIPRecordsLedger', 'getIPRecordFile',
@@ -130,6 +132,9 @@ export const WRITER = new Set([
   // Group J: mother & child, consent, nominees
   'mcOpenAntenatal', 'mcCloseAntenatal', 'mcRecordAntenatalVisit', 'mcRecordImmunisation', 'mcMarkDoseNotGiven', 'recordConsent',
   'withdrawConsent', 'recordNomination', 'revokeNomination',
+  // Group L: the antenatal card's scans, checklist and PICME number; a child's growth, milestones and the schedule caught up
+  'mcRecordScan', 'mcVoidScan', 'mcRedateToScan', 'mcRecordChecklist', 'mcVoidChecklist', 'mcSetPicme',
+  'mcRecordGrowth', 'mcVoidGrowth', 'mcRecordMilestones', 'mcRecordUipUpToAge',
   // Group K: the privacy console (data requests, breaches, consent asked as a
   // document is sent, consent backfilled), a reminder marked sent
   'raiseDPDPRequest', 'dpdpVerifyRequester', 'closeDPDPRequest', 'dpdpRaiseBreach', 'dpdpAssessBreach', 'recordDispatchConsent',
