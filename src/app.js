@@ -234,7 +234,17 @@ export const FLUSH_AFTER = {
   dpdpAssessBreach: { sheets: ['Breach_Register'], watch: true }, recordDispatchConsent: { sheets: ['Consent_Register', 'Patients'], watch: true },
   dpdpBackfillConsent: { sheets: ['Consent_Register', 'Patients'], watch: true }, markReminderSent: ['Reminder_Log'],
   // A backup taken from Operations (Drive: Apps Script's): its line in the log, for the Backups tab's reload.
-  runBackupNow: ['Backup_Log']
+  runBackupNow: ['Backup_Log'],
+  // the new screens' saves
+  audRequest: ['Audio_Requests'],
+  audSave: { sheets: ['Audiograms', 'Audio_Requests'], watch: true },
+  audVoid: { sheets: ['Audiograms', 'Audio_Requests'], watch: true },
+  // the new screens' saves
+  ivfSaveCouple: { sheets: ['IVF_Couples'], watch: true },
+  ivfSaveCycle: { sheets: ['IVF_Cycles'], watch: true },
+  ivfAddScan: ['IVF_Scans'],
+  ivfVoidScan: { sheets: ['IVF_Scans'], watch: true },
+  ivfSaveCryo: { sheets: ['IVF_Cryo'], watch: true }
 };
 
 /**
