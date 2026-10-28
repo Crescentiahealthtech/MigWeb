@@ -17,14 +17,14 @@ const pat = (n, id, name, age, sex, mobile, sal, email = '') => {
 };
 const PATIENTS = [pat(2, 'DEMO0001', 'Ilango N', 71, 'M', 9876500001, 'Mr', 'ilango@example.org'),
                   pat(4, 'DEMO0002', 'Yamuna E', 64, 'F', 9876500002, 'Mrs')];         // row 3 is blank in the sheet
-const OP_HEAD = Array.from({ length: 26 }, (_, i) => (i === 12 ? 'Pallor' : i === 17 ? 'CVS' : 'op' + i));
+const OP_HEAD = Array.from({ length: 31 }, (_, i) => (i === 12 ? 'Pallor' : i === 17 ? 'CVS' : ['Height_Cm', 'Resp_Rate', 'PV_Exam', 'Local_Exam', 'Paed_Exam'][i - 26] || 'op' + i));
 const op = (n, appt, pid, at, extra = {}) => {
-  const v = new Array(26).fill(''); v[0] = appt; v[1] = pid; v[2] = { $d: at }; v[3] = 120; v[4] = 80; v[5] = 72;
+  const v = new Array(31).fill(''); v[0] = appt; v[1] = pid; v[2] = { $d: at }; v[3] = 120; v[4] = 80; v[5] = 72;
   v[10] = 'Fever'; v[12] = 'Absent'; v[17] = 'S1S2 heard'; v[21] = 'Viral fever'; v[22] = '[]';
   Object.entries(extra).forEach(([k, x]) => { v[k] = x; });
   return [n, v, null];
 };
-const ENCOUNTERS = [op(2, 'OP-1', 'DEMO0001', IST(2026, 10, 1, 9, 5)), op(3, 'OP-2', 'DEMO0001', IST(2026, 10, 9, 17, 40), { 25: { $d: IST(2026, 10, 16) } })];
+const ENCOUNTERS = [op(2, 'OP-1', 'DEMO0001', IST(2026, 10, 1, 9, 5), { 26: 74, 27: 22, 28: 'Os closed', 29: 'Right ear: wax', 30: JSON.stringify({ hc: '45.2', danger: ['Vomits everything'], cry: 'Weak' }) }), op(3, 'OP-2', 'DEMO0001', IST(2026, 10, 9, 17, 40), { 25: { $d: IST(2026, 10, 16) } })];
 const ADMISSIONS = [[2, ['IP-1', 'DEMO0002', '', '', { $d: IST(2026, 9, 1) }], null]];
 
 const SESSIONS = {
@@ -109,12 +109,18 @@ test('the timeline of an outpatient: visits newest first, times in IST', async (
   const { source, v } = await call('buildLongitudinalTimeline', ['demo0001', 'DESK']);
   assert.equal(source, 'supabase');
   assert.equal(v.success, true);
-  assert.deepEqual(v.data.patient, { id: 'DEMO0001', name: 'Ilango N', age: 71, sex: 'M', mobile: 9876500001, email: 'ilango@example.org' });
+  assert.deepEqual(v.data.patient, { id: 'DEMO0001', name: 'Ilango N', age: 71, sex: 'M', dob: '', mobile: 9876500001, email: 'ilango@example.org' });
   assert.deepEqual(v.data.events.map((e) => [e.apptId, e.date, e.followUp]),
     [['OP-2', '09-Oct-2026 | 05:40 PM', '16-Oct-2026'], ['OP-1', '01-Oct-2026 | 09:05 AM', 'None']]);
   assert.equal(v.data.events[0].vitals, JSON.stringify({ bp: '120/80', hr: 72 }));
   assert.equal(v.data.events[0].genExam, JSON.stringify({ Pallor: 'Absent' }));
   assert.equal(v.data.events[0].sysExam, JSON.stringify({ CVS: 'S1S2 heard' }));
+  // The appended columns: height and respiratory rate with the vitals, P/V with the systems, the local and paediatric examinations.
+  assert.equal(v.data.events[0].vitals, JSON.stringify({ bp: '120/80', hr: 72 }));
+  assert.equal(v.data.events[1].vitals, JSON.stringify({ bp: '120/80', hr: 72, height: '74', rr: '22' }));
+  assert.equal(v.data.events[1].sysExam, JSON.stringify({ CVS: 'S1S2 heard', PV: 'Os closed' }));
+  assert.deepEqual([v.data.events[1].localExam, v.data.events[1].paedText], ['Right ear: wax', 'Danger signs: Vomits everything; Measurements: HC 45.2 cm; Cry: Weak']);
+  assert.deepEqual([v.data.events[0].localExam, v.data.events[0].paedExam, v.data.events[0].paedText], ['', '', '']);
   assert.deepEqual(log.audits.map((a) => [a.what, a.entityId]), [['Patient', 'demo0001']]);
   assert.deepEqual((await call('buildLongitudinalTimeline', ['NOBODY', 'DESK'])).v, { found: false, patient: {}, events: [] });
 });
