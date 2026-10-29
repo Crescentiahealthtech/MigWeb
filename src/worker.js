@@ -8,6 +8,8 @@
 //   /ledger/     a stand-alone read-only ledger with Google sign-in
 //   /api/ledger  its data: GET ?date=yyyy-MM-dd&doctor=DOC001
 //   /api/health  is the Worker up, can it reach Supabase and Apps Script
+//   /api/lab/import  POST from the lab extension (extension/): a TN HMIS lab
+//                report's text → parsed rows, saved to Supabase on save:true
 //
 // Settings (Cloudflare → Workers → migweb → Settings → Variables and Secrets):
 //   APP_EXEC_URL         the Apps Script deployment's …/exec address (the
@@ -15,6 +17,8 @@
 //   SUPABASE_SECRET_KEY  secret: the project's sb_secret_… key (server-side only)
 //   ALLOWED_EMAILS       for /ledger/ only: Google accounts allowed in,
 //                        comma-separated. Empty = nobody.
+//   LAB_IMPORT_KEY       secret: the key the lab extension sends (X-Lab-Key).
+//                        Empty = /api/lab/import is off.
 //   EDGE_LEDGER          "off" sends the app's Daily Ledger to Apps Script too
 //   SUPABASE_URL, FIREBASE_PROJECT_ID   in wrangler.jsonc
 //
@@ -24,6 +28,7 @@
 
 import { verifyFirebaseToken } from './auth.js';
 import { ledgerQueries, buildLedger, doctorsFrom, staffFromUsers, resolveScope, dayKey, todayIST } from './ledger.js';
+import { parseLabReport } from './labparse.js';
 import { rpc as appRpc, shell, notSetUp, hasApp, migrationStatus } from './app.js';
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), {
@@ -77,6 +82,26 @@ async function ledger(request, env) {
   return json(out);
 }
 
+// The extension sends the report's text; this parses it and, on save, stores
+// it (lab_import: one row per test, re-sending a report updates its rows).
+async function labImport(request, env) {
+  const key = String(env.LAB_IMPORT_KEY || '');
+  if (key.length < 16 || request.headers.get('x-lab-key') !== key) {
+    return json({ success: false, message: 'Wrong or missing lab key (extension Options).' }, 401);
+  }
+  const body = await request.json().catch(() => null);
+  const text = body && typeof body.text === 'string' ? body.text : '';
+  if (!text || text.length > 200000) return json({ success: false, message: 'No report text.' }, 400);
+  const report = parseLabReport(text);
+  if (!report.orderNo || !report.patient.pin || !report.results.length) {
+    return json({ success: false, message: 'This does not look like a TN HMIS lab report (no PIN, Order No or results).', report }, 422);
+  }
+  if (!body.save) return json({ success: true, saved: false, report });
+  const by = String(body.by || '').slice(0, 80), source = String(body.source || '').slice(0, 500);
+  const saved = await rpc(env, 'lab_import', { report, by, source });
+  return json({ success: true, saved: true, rows: saved, report });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -91,6 +116,7 @@ export default {
         return json({ ok: true, supabase, app: hasApp(env) ? 'set' : 'APP_EXEC_URL not set',
                       edgeLedger: String(env.EDGE_LEDGER || '').toLowerCase() === 'off' ? 'off' : 'on', ms: Date.now() - t0 });
       }
+      if (url.pathname === '/api/lab/import' && request.method === 'POST') return await labImport(request, env);
       if (url.pathname === '/api/migration') return json(migrationStatus(env));   // TEMPORARY: the status badge's list
       if (url.pathname.startsWith('/api/')) return json({ success: false, message: 'Not found.' }, 404);
       if (url.pathname === '/robots.txt') return new Response('User-agent: *\nDisallow: /\n', { headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'public, max-age=86400' } });
