@@ -98,7 +98,7 @@ test('saves kept with Apps Script never go to the Edge Function; each copies wha
   // Every read served is a read (get…, list…, fetch…, check…, search…, preview…, suggest…, build…, lookup…, a print, …Eligibility).
   // Named otherwise and reads all the same (MIGRATION tools/sbmirror.js runs each): the access overview, the
   // administrator's scope, the privacy console's consent queue, summary and breach notice.
-  for (const fn of RUNNER) assert.match(fn, /^(hb_|mc|ds_)?(get|Get|list|List|fetch|check|search|preview|suggest|build|lookup|verify|resolve|portal|labList)|^mtPrint|Eligibility$|^(crescGetAccessOverview|crescUserAdminScope|dpdpConsentQueue|dpdpConsoleSnapshot|dpdpBreachNotice)$/, fn);
+  for (const fn of RUNNER) assert.match(fn, /^(hb_|mc|ds_)?(get|Get|list|List|fetch|check|search|preview|suggest|build|lookup|verify|resolve|portal|labList)|^mtPrint|Eligibility$|^(aud(Queue|GetPatient|PrintHtml|Report|PrintReport)|mcFindWoman|mcPrintAntenatalRegister|getOPWomensCare)$|^ivf(Search|Get|Lookup|Print)|^(crescGetAccessOverview|crescUserAdminScope|dpdpConsentQueue|dpdpConsoleSnapshot|dpdpBreachNotice)$/, fn);
 });
 
 test('a write listed to copy in the background is copied just after its answer (none is, since Day 6)', async () => {
@@ -219,7 +219,7 @@ test('the saves the Worker sends are groups A-K and the claim tracker\'s, none a
   for (const fn of ['registerPatient', 'deletePhraseTemplate', 'saveIPNote', 'settleDischarge', 'processPharmacyBill', 'collectLabSample', 'ds_initiateDischarge', 'recordConsent']) assert.ok(WRITER.has(fn), fn);
   for (const fn of ['moveClaimStage', 'tickClaimDocument', 'chaseClaim', 'saveInsurerContact', 'saveClaimSla']) assert.ok(WRITER.has(fn), fn);
   for (const fn of ['getClaimTracker', 'getClaimDetail']) assert.ok(RUNNER.has(fn), fn);
-  assert.equal(WRITER.size, 151);
+  assert.equal(WRITER.size, 159);
   for (const fn of ['saveReorderSetting', 'saveSupplierReorderSetting', 'saveReorderConfig', 'createPurchaseOrderDraft', 'setPurchaseOrderStatus']) assert.ok(WRITER.has(fn), fn);
   assert.ok(!WRITER.has('emailPurchaseOrder'), 'emailPurchaseOrder: a PDF e-mailed, Apps Script\'s');
 });

@@ -76,11 +76,9 @@ function fmtIST(d, pattern) {
     .replace('hh', p2(h12)).replace('mm', p2(t.getUTCMinutes())).replace(/\ba\b/, h < 12 ? 'AM' : 'PM');
 }
 
-/** yyyy-MM-dd in the clinic's zone (Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd")). */
-function ymdIST(d) {
-  const t = new Date(d.getTime() + IST_MS), p2 = (n) => (n < 10 ? '0' : '') + n;
-  return t.getUTCFullYear() + '-' + p2(t.getUTCMonth() + 1) + '-' + p2(t.getUTCDate());
-}
+/** yyyy-MM-dd in the clinic's zone (Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd")): the zone's own rules, so a date in 1942-45 (India kept +6:30) is the one Apps Script prints. */
+const YMD = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
+function ymdIST(d) { return YMD.format(d); }
 
 /** op_parsePaedExam_ (OP_Database_Engine.gs): Paed_Exam back to an object; null when empty or unreadable. */
 function parsePaed(raw) {

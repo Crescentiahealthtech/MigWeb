@@ -77,7 +77,11 @@ export const RUNNER = new Set([
   // Audit_Log, getDaySignIns) and the backups' log and schedule.
   'getMasterLedger', 'getDaySummary', 'getBackupStatus',
   // The claim tracker, as a ledger: a page of claims with the whole set's totals, one claim opened.
-  'getClaimTracker', 'getClaimDetail'
+  'getClaimTracker', 'getClaimDetail',
+  // Added with the new screens (served.json): mother & child, audiometry, the women's care panel, Lotus IVF, consent forms, the intake and output chart.
+  'audQueue', 'audGetPatient', 'audPrintHtml', 'audReport', 'audPrintReport',
+  // Added with the new screens (served.json): mother & child, audiometry, the women's care panel, Lotus IVF, consent forms, the intake and output chart.
+  'ivfSearch', 'ivfGetCouple', 'ivfLookupPatient', 'ivfGetRegister', 'ivfPrintRegister', 'ivfPrintCycle', 'ivfPrintCouple', 'getOPWomensCare', 'mcPrintAntenatalRegister', 'mcFindWoman'
 ]);
 
 /**
@@ -145,7 +149,11 @@ export const WRITER = new Set([
   // Group G, the pharmacy's reorder (Pharmacy_Reorder.gs): a medicine's level,
   // a supplier's lead time, the defaults, a draft order and its status. The
   // order e-mailed as a PDF (emailPurchaseOrder) stays with Apps Script.
-  'saveReorderSetting', 'saveSupplierReorderSetting', 'saveReorderConfig', 'createPurchaseOrderDraft', 'setPurchaseOrderStatus'
+  'saveReorderSetting', 'saveSupplierReorderSetting', 'saveReorderConfig', 'createPurchaseOrderDraft', 'setPurchaseOrderStatus',
+  // the new screens' saves
+  'audRequest', 'audSave', 'audVoid',
+  // the new screens' saves
+  'ivfSaveCouple', 'ivfSaveCycle', 'ivfAddScan', 'ivfVoidScan', 'ivfSaveCryo'
 ]);
 
 /**
