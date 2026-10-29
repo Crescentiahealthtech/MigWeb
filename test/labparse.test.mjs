@@ -63,3 +63,8 @@ test('/api/lab/import: key, preview, save, rejects non-reports', async () => {
   assert.equal(sent[0][0], 'https://sb.test/rest/v1/rpc/lab_import');
   assert.equal(sent[0][1].p.by, 'Dr X'); assert.equal(sent[0][1].p.report.orderNo, '12345678');
 });
+
+test('the page and the extension read PDFs with the same code', async () => {
+  const { readFileSync } = await import('node:fs');
+  assert.equal(readFileSync('public/lab/pdftext.js', 'utf8'), readFileSync('extension/pdftext.js', 'utf8'));
+});
