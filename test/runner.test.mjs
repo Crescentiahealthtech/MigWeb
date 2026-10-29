@@ -219,7 +219,7 @@ test('the saves the Worker sends are groups A-K and the claim tracker\'s, none a
   for (const fn of ['registerPatient', 'deletePhraseTemplate', 'saveIPNote', 'settleDischarge', 'processPharmacyBill', 'collectLabSample', 'ds_initiateDischarge', 'recordConsent']) assert.ok(WRITER.has(fn), fn);
   for (const fn of ['moveClaimStage', 'tickClaimDocument', 'chaseClaim', 'saveInsurerContact', 'saveClaimSla']) assert.ok(WRITER.has(fn), fn);
   for (const fn of ['getClaimTracker', 'getClaimDetail']) assert.ok(RUNNER.has(fn), fn);
-  assert.equal(WRITER.size, 159);
+  assert.equal(WRITER.size, 162);
   for (const fn of ['saveReorderSetting', 'saveSupplierReorderSetting', 'saveReorderConfig', 'createPurchaseOrderDraft', 'setPurchaseOrderStatus']) assert.ok(WRITER.has(fn), fn);
   assert.ok(!WRITER.has('emailPurchaseOrder'), 'emailPurchaseOrder: a PDF e-mailed, Apps Script\'s');
 });
