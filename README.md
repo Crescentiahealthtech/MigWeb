@@ -262,3 +262,25 @@ npm test
 - `public/ledger/index.html` — the page
 - `public/vendor/firebase-10.7.1/` — Firebase sign-in SDK, served from here
 - `test/` — offline checks (`npm test`)
+
+## Lab results from TN HMIS (`extension/`, `/api/lab/import`)
+
+A Chrome/Edge extension copies the lab report a signed-in user is looking at
+in TN HMIS into Supabase (`lab_results`, `lab_orders`). It only acts when the
+user clicks; it never browses HMIS by itself.
+
+1. **Once, in Supabase → SQL Editor:** run `sql/lab_results.sql`.
+2. **Once, the key:** `npx wrangler secret put LAB_IMPORT_KEY` (any random
+   string of 16+ characters). Without it `/api/lab/import` answers 401.
+3. **Each PC:** `chrome://extensions` (or `edge://extensions`) → Developer
+   mode → *Load unpacked* → the `extension/` folder. In its Options, enter
+   the web app's address, the key and the user's name.
+4. **Use:** open the report (the HMIS page or its PDF) → click the extension →
+   *Read this report* → check the table → *Save to CresRx*. A PDF already
+   downloaded can be chosen in the popup instead.
+
+The PDF's text is read in the browser (`extension/pdftext.js`, pdf.js 4.10.38
+in `extension/vendor/`); the Worker parses it (`src/labparse.js`) and stores
+one row per test, keyed by Order No + panel + test, so saving a report again
+updates it rather than duplicating it. Abnormal (`*`) values are flagged and
+rejected tests go to `lab_orders`.
