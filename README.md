@@ -279,6 +279,13 @@ user clicks; it never browses HMIS by itself.
    *Read this report* → check the table → *Save to CresRx*. A PDF already
    downloaded can be chosen in the popup instead.
 
+**Phones (and PCs without the extension): `/lab/`.** Open
+`<web app address>/lab/`, enter the lab key and your name once (Settings),
+then *Choose lab report PDF* → check → *Save to CresRx*. On Android, after
+adding the app to the home screen and opening `/lab/` once, a PDF can be sent
+straight from WhatsApp/Files with *Share → DEMO CLINIC* (`share_target` in
+`public/manifest.webmanifest`, received by `public/lab/sw.js`).
+
 The PDF's text is read in the browser (`extension/pdftext.js`, pdf.js 4.10.38
 in `extension/vendor/`); the Worker parses it (`src/labparse.js`) and stores
 one row per test, keyed by Order No + panel + test, so saving a report again
