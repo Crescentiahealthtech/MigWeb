@@ -41,18 +41,39 @@ async function preview(text, source) {
 
 async function readTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (/\.pdf($|\?)/i.test(tab.url) || (!tab.url.startsWith('blob:') && await isPdf(tab.url))) {
-    const data = new Uint8Array(await (await fetch(tab.url, { credentials: 'include' })).arrayBuffer());
-    return preview(await pdfLines(pdfjs, data), tab.url);
+  const url = tab && (tab.url || tab.pendingUrl) || '';
+  // HMIS opens the report as blob:https://tnhmislims.org/…: only a page of that
+  // site can read it, so it is fetched from inside an open HMIS tab.
+  if (url.startsWith('blob:')) return preview(await pdfLines(pdfjs, await blobFromSite(url)), 'hmis-pdf');
+  if (/\.pdf($|\?)/i.test(url) || await isPdf(url)) {
+    const data = new Uint8Array(await (await fetch(url, { credentials: 'include' })).arrayBuffer());
+    return preview(await pdfLines(pdfjs, data), url);
   }
   // An HTML report: the text of the page and its frames (table cells come tab-separated).
   const frames = await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => document.body ? document.body.innerText : '' });
   const text = frames.map((f) => f.result || '').find((t) => /Order No/i.test(t) && /PIN/.test(t));
   if (!text) throw new Error('No lab report on this page. Open the report (or its PDF), or choose the PDF file.');
-  return preview(text, tab.url);
+  return preview(text, url);
+}
+
+async function blobFromSite(blobUrl) {
+  const origin = new URL(blobUrl.slice(5)).origin;
+  const tabs = await chrome.tabs.query({ url: origin + '/*' });
+  for (const t of tabs) {
+    try {
+      const [r] = await chrome.scripting.executeScript({ target: { tabId: t.id }, world: 'MAIN', args: [blobUrl], func: async (u) => {
+        const b = new Uint8Array(await (await fetch(u)).arrayBuffer());
+        let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+        return btoa(s);
+      } });
+      if (r && r.result) return Uint8Array.from(atob(r.result), (c) => c.charCodeAt(0));
+    } catch { /* that tab is not the one that made it */ }
+  }
+  throw new Error('Keep the HMIS tab that opened this report open, then try again. Or download the PDF and choose it here.');
 }
 
 async function isPdf(url) {
+  if (!/^https?:/.test(url)) return false;
   try { return /pdf/i.test((await fetch(url, { method: 'HEAD', credentials: 'include' })).headers.get('content-type') || ''); }
   catch { return false; }
 }
