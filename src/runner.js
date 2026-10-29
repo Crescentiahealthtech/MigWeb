@@ -81,7 +81,8 @@ export const RUNNER = new Set([
   // Added with the new screens (served.json): mother & child, audiometry, the women's care panel, Lotus IVF, consent forms, the intake and output chart.
   'audQueue', 'audGetPatient', 'audPrintHtml', 'audReport', 'audPrintReport',
   // Added with the new screens (served.json): mother & child, audiometry, the women's care panel, Lotus IVF, consent forms, the intake and output chart.
-  'ivfSearch', 'ivfGetCouple', 'ivfLookupPatient', 'ivfGetRegister', 'ivfPrintRegister', 'ivfPrintCycle', 'ivfPrintCouple', 'getOPWomensCare', 'mcPrintAntenatalRegister', 'mcFindWoman'
+  'ivfSearch', 'ivfGetCouple', 'ivfLookupPatient', 'ivfGetRegister', 'ivfPrintRegister', 'ivfPrintCycle', 'ivfPrintCouple', 'getOPWomensCare', 'mcPrintAntenatalRegister', 'mcFindWoman',
+  'getConsentContext', 'previewConsent', 'getConsentPrintHtml'
 ]);
 
 /**
@@ -153,7 +154,8 @@ export const WRITER = new Set([
   // the new screens' saves
   'audRequest', 'audSave', 'audVoid',
   // the new screens' saves
-  'ivfSaveCouple', 'ivfSaveCycle', 'ivfAddScan', 'ivfVoidScan', 'ivfSaveCryo'
+  'ivfSaveCouple', 'ivfSaveCycle', 'ivfAddScan', 'ivfVoidScan', 'ivfSaveCryo',
+  'saveConsent', 'markConsent', 'saveConsentWording'
 ]);
 
 /**

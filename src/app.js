@@ -244,6 +244,8 @@ export const FLUSH_AFTER = {
   ivfSaveCycle: { sheets: ['IVF_Cycles'], watch: true },
   ivfAddScan: ['IVF_Scans'],
   ivfVoidScan: { sheets: ['IVF_Scans'], watch: true },
+  saveConsent: { sheets: ['Consent_Records'], watch: true }, markConsent: { sheets: ['Consent_Records'], watch: true },
+  saveConsentWording: { sheets: ['Consent_Text', 'Consent_Approvals'], watch: true },
   ivfSaveCryo: { sheets: ['IVF_Cryo'], watch: true }
 };
 
