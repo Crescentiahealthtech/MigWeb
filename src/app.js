@@ -86,7 +86,7 @@ export const FLUSH_AFTER = {
   // only those and the new rows are copied: the doctor waits for this.
   saveOPEncounterScoped: { sheets: ['Appointments', 'OP_Encounters', 'Clinical_Templates'], window: 0 },
   createOPReferral: ['Appointments', 'Patients', 'OP_Referrals'], respondToOPReferral: ['Appointments', 'OP_Encounters', 'OP_Referrals'],
-  registerPatient: ['Patients'], updatePatientProfile: ['Patients'], saveUserProfile: ['Patients'],
+  registerPatient: ['Patients', 'Appointments'], updatePatientProfile: ['Patients'], saveUserProfile: ['Patients'],
   savePatientAllergies: ['Patients'],
   // The bed map and ward are answered from the copy (Day 4b): the beds too.
   saveNewAdmissionLedger: { sheets: ['IP_Admissions', 'Patients', 'Master_Beds'], watch: true },
@@ -96,7 +96,7 @@ export const FLUSH_AFTER = {
   saveDoctorSchedule: ['Doctor_Schedules'], addScheduleException: ['Doctor_Schedule_Exceptions'],
   deleteScheduleException: ['Doctor_Schedule_Exceptions'], setDoctorDayBlocks: ['Doctor_Schedule_Exceptions'],
   // Accounts: a changed Users row ends the stored sessions it was stored with.
-  crescSaveUserAccess: ['Users'], crescSetAccountActive: ['Users'], crescAdminResetPassword: ['Users'],
+  crescSaveUserAccess: ['Users'], crescSetAccountActive: ['Users'], crescSetStaffEmail: ['Users', 'Doctors'], crescAdminResetPassword: ['Users'],
   crescChangePassword: ['Users'], crescCreateStaffAccount: ['Users', 'Doctors'],
   // Finance Hub (its screens are answered from the copy: src/runner.js).
   // Every money write also leaves an entry in Audit_Event_Ledger (the audit
