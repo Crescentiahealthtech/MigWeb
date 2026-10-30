@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lab Import</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#020617">
+<style>
+:root{--bg:#fff;--fg:#0f172a;--muted:#64748b;--line:#e2e8f0;--ab:#dc2626;--btn:#0f766e}
+@media (prefers-color-scheme:dark){:root{--bg:#020617;--fg:#e2e8f0;--muted:#94a3b8;--line:#1e293b;--ab:#f87171;--btn:#14b8a6}}
+body{font:15px system-ui;margin:0;padding:16px;background:var(--bg);color:var(--fg);max-width:720px;margin-inline:auto}
+h1{font-size:20px;margin:0 0 12px}.muted{color:var(--muted)}
+button,.pick{display:inline-block;padding:10px 16px;border:0;border-radius:8px;background:var(--btn);color:#fff;font:inherit;cursor:pointer}
+input[type=text],input[type=password]{width:100%;padding:8px;box-sizing:border-box;margin:4px 0 10px;font:inherit}
+table{border-collapse:collapse;width:100%;margin-top:10px;font-size:14px}td,th{border-bottom:1px solid var(--line);padding:5px 4px;text-align:left}
+.ab{color:var(--ab);font-weight:600}#msg{margin:10px 0;white-space:pre-wrap}details{margin-bottom:14px}
+</style></head><body>
+<h1>Lab Import <span class="muted">· TN HMIS report → CresRx</span></h1>
+<details id="setup"><summary>Settings (once per device)</summary>
+  <label>Lab key<input id="key" type="password" autocomplete="off"></label>
+  <label>Your name<input id="by" type="text"></label>
+  <button id="saveSet">Save settings</button>
+</details>
+<label class="pick">Choose lab report PDF<input id="file" type="file" accept="application/pdf,.pdf" hidden></label>
+<p class="muted">On Android you can also open the PDF and tap <b>Share → DEMO CLINIC</b> (after adding this app to the home screen).</p>
+<div id="msg"></div>
+<div id="preview"></div>
+<button id="save" hidden>Save to CresRx</button>
+<script type="module" src="lab.js"></script>
+</body></html>

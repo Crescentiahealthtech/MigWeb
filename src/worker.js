@@ -8,6 +8,7 @@
 //   /ledger/     a stand-alone read-only ledger with Google sign-in
 //   /api/ledger  its data: GET ?date=yyyy-MM-dd&doctor=DOC001
 //   /api/health  is the Worker up, can it reach Supabase and Apps Script
+//   /lab/        lab report import page (phones and PCs without the extension)
 //   /api/lab/import  POST from the lab extension (extension/): a TN HMIS lab
 //                report's text → parsed rows, saved to Supabase on save:true
 //
@@ -117,6 +118,8 @@ export default {
                       edgeLedger: String(env.EDGE_LEDGER || '').toLowerCase() === 'off' ? 'off' : 'on', ms: Date.now() - t0 });
       }
       if (url.pathname === '/api/lab/import' && request.method === 'POST') return await labImport(request, env);
+      // A share before /lab/ was ever opened here (no service worker yet to take it).
+      if (url.pathname === '/lab/share' && request.method === 'POST') return Response.redirect(url.origin + '/lab/?shared=0', 303);
       if (url.pathname === '/api/migration') return json(migrationStatus(env));   // TEMPORARY: the status badge's list
       if (url.pathname.startsWith('/api/')) return json({ success: false, message: 'Not found.' }, 404);
       if (url.pathname === '/robots.txt') return new Response('User-agent: *\nDisallow: /\n', { headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'public, max-age=86400' } });
