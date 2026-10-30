@@ -52,20 +52,45 @@ const ENV = { LAB_IMPORT_KEY: KEY, SUPABASE_URL: 'https://sb.test', SUPABASE_SEC
 const call = (body, key = KEY) => worker.fetch(new Request('https://w.test/api/lab/import', {
   method: 'POST', headers: { 'x-lab-key': key, 'content-type': 'application/json' }, body: JSON.stringify(body) }), ENV, {});
 
-test('/api/lab/import: key, preview, save, rejects non-reports', async () => {
+test('/api/lab/import: key, preview with patient, save, rejects non-reports and unknown IDs', async () => {
   const sent = [];
-  globalThis.fetch = async (url, init) => { sent.push([url, JSON.parse(init.body)]); return new Response('5'); };
+  let hmis = '11112222333344';
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (url.endsWith('/mirror_query')) return Response.json({ results: [{ found: true, header: ['Patient ID', 'x', 'Name', 'Age', 'Sex', 'HMIS ID'],
+      rows: [[2, null, ['DEMO0007', '', 'Test Patient', '52', 'F', hmis]]] }] });
+    sent.push([url, body]); return new Response('5');
+  };
   assert.equal((await call({ text: REPORT }, 'wrong')).status, 401);
   const pre = await (await call({ text: REPORT })).json();
-  assert.equal(pre.saved, false); assert.equal(pre.report.results.length, 5); assert.equal(sent.length, 0);
+  assert.equal(pre.saved, false); assert.equal(pre.report.results.length, 5); assert.equal(pre.patient.patientId, 'DEMO0007');
+  assert.equal(sent.length, 0);
   assert.equal((await call({ text: 'hello' })).status, 422);
   const saved = await (await call({ text: REPORT, save: true, by: 'Dr X', source: 'https://hmis/x' })).json();
   assert.equal(saved.rows, 5);
   assert.equal(sent[0][0], 'https://sb.test/rest/v1/rpc/lab_import');
   assert.equal(sent[0][1].p.by, 'Dr X'); assert.equal(sent[0][1].p.report.orderNo, '12345678');
+  assert.equal(sent[0][1].p.patientId, 'DEMO0007');
+  hmis = '999';
+  const none = await call({ text: REPORT, save: true });
+  assert.equal(none.status, 409); assert.match((await none.json()).message, /No CresRx patient has HMIS ID 11112222333344/);
 });
 
 test('the page and the extension read PDFs with the same code', async () => {
   const { readFileSync } = await import('node:fs');
   assert.equal(readFileSync('public/lab/pdftext.js', 'utf8'), readFileSync('extension/pdftext.js', 'utf8'));
+});
+
+test('a report goes to the patient with its HMIS ID, never by name', async () => {
+  const { findByPin } = await import('../src/labmatch.js');
+  const sheet = { found: true, header: ['Patient ID', 'x', 'Name', 'Age', 'Sex', 'HMIS ID'], rows: [
+    [2, null, ['DEMO0001', '', 'TEST PATIENT', '52', 'F', '5551 0000 0000 01']],
+    [3, null, ['DEMO0002', '', 'TEST PATIENT', '30', 'F', '55510000000002']]] };
+  const rpc = async () => ({ results: [sheet] });
+  assert.deepEqual(await findByPin(rpc, '55510000000001'), { patientId: 'DEMO0001', name: 'TEST PATIENT', age: '52', sex: 'F' });
+  assert.equal(await findByPin(rpc, '55519999999999'), null);
+  sheet.rows.push([4, null, ['DEMO0003', '', 'Other', '1', 'M', '55510000000002']]);
+  assert.deepEqual(await findByPin(rpc, '55510000000002'), { duplicate: ['DEMO0002', 'DEMO0003'] });
+  sheet.header[5] = 'Notes';
+  await assert.rejects(findByPin(rpc, '1'), /no HMIS ID column/);
 });
