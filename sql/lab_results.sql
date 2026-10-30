@@ -8,6 +8,7 @@ create table if not exists public.lab_results (
   panel         text        not null default '',
   test          text        not null,
   pin           text        not null,
+  patient_id    text,
   patient_name  text,
   age           text,
   sex           text,
@@ -27,6 +28,8 @@ create table if not exists public.lab_results (
   imported_at   timestamptz not null default now(),
   primary key (order_no, panel, test)
 );
+alter table public.lab_results add column if not exists patient_id text;   -- for a table made before this column
+create index if not exists lab_results_patient on public.lab_results (patient_id, reported_at desc);
 create index if not exists lab_results_pin on public.lab_results (pin, reported_at desc);
 alter table public.lab_results enable row level security;
 
@@ -45,16 +48,16 @@ create or replace function public.lab_import(p jsonb) returns integer
 language plpgsql security definer set search_path = public as $$
 declare r jsonb := p->'report'; n integer;
 begin
-  insert into lab_results as t (order_no, panel, test, pin, patient_name, age, sex, facility, ordered_at,
+  insert into lab_results as t (order_no, panel, test, pin, patient_id, patient_name, age, sex, facility, ordered_at,
     sample_type, method, collected_at, reported_at, value, value_num, unit, ref_range, abnormal, imported_by, source)
-  select r->>'orderNo', coalesce(x->>'panel', ''), x->>'test', r->'patient'->>'pin', r->'patient'->>'name',
+  select r->>'orderNo', coalesce(x->>'panel', ''), x->>'test', r->'patient'->>'pin', p->>'patientId', r->'patient'->>'name',
          r->'patient'->>'age', r->'patient'->>'sex', r->>'facility', (r->>'orderedAt')::timestamptz,
          x->>'sampleType', x->>'method', (x->>'collectedAt')::timestamptz, (x->>'reportedAt')::timestamptz,
          x->>'value', (x->>'num')::numeric, x->>'unit', x->>'range', coalesce((x->>'abnormal')::boolean, false),
          p->>'by', p->>'source'
   from jsonb_array_elements(r->'results') x
   on conflict (order_no, panel, test) do update set
-    value = excluded.value, value_num = excluded.value_num, unit = excluded.unit, ref_range = excluded.ref_range,
+    patient_id = excluded.patient_id, value = excluded.value, value_num = excluded.value_num, unit = excluded.unit, ref_range = excluded.ref_range,
     abnormal = excluded.abnormal, reported_at = excluded.reported_at, imported_by = excluded.imported_by,
     source = excluded.source, imported_at = now();
   get diagnostics n = row_count;
