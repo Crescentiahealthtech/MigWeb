@@ -43,6 +43,7 @@ test('parses header, panels, flags, units and rejected orders', () => {
   ]);
   assert.equal(r.results[3].sampleType, 'EDTA whole blood');
   assert.equal(r.results[3].reportedAt, '2025-03-05T05:06:00.000Z');
+  assert.equal(parseLabReport('Order No   :  37748552, 37748551').orderNo, '37748552,37748551');
   assert.deepEqual(r.orders, [{ test: 'Liver Function Test (LFT)', status: 'REJECTED' }]);
 });
 
