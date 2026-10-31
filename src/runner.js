@@ -17,6 +17,10 @@
 // ============================================================================
 
 export const RUNNER = new Set([
+  // Registration: is this patient already on file (Patient_Match.gs)
+  'searchPatientMatches',
+  // The last prescription, printed from a scan or the history panel (EMR_MasterTimeline_Logic.gs)
+  'mtPrintLastOP',
   // Finance Hub
   'getAccountsDashboard', 'getFinanceDashboard', 'getReceivables', 'getAllDrawerStates', 'getShiftState', 'getPayables',
   'getExpenseRegister', 'getTaxSummary', 'getAuditModules', 'getAuditLog', 'getInsuranceClaims', 'getInsurers', 'getPackages',

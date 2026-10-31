@@ -29,7 +29,9 @@ const unsure = (why) => { throw new Unsure(why); };
 const p2 = (n) => (n < 10 ? '0' : '') + n;
 const ist = (d) => new Date(d.getTime() + IST_MS);
 /** Utilities.formatDate(d, 'Asia/Kolkata', 'yyyy-MM-dd'). */
-const istDate = (d) => { const t = ist(d); return t.getUTCFullYear() + '-' + p2(t.getUTCMonth() + 1) + '-' + p2(t.getUTCDate()); };
+// The zone's own rules, not a fixed +5:30: India kept +6:30 from 1942 to 1945, and a date of birth in those years is the day Apps Script prints.
+const YMD_IST = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
+const istDate = (d) => YMD_IST.format(d);
 /** Date.prototype.toString() as Apps Script prints it, the script's zone being Asia/Kolkata. */
 export function istToString(d) {
   if (isNaN(d.getTime())) return 'Invalid Date';
