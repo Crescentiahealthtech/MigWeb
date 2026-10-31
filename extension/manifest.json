@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CresRx Lab Import",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Sends the TN HMIS lab report you are looking at to the CresRx web app.",
   "action": {
     "default_popup": "popup.html",

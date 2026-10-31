@@ -35,7 +35,7 @@ export function parseLabReport(text) {
       continue;
     }
     if ((v = field(line, 'PIN')) !== null) { out.patient.pin = v.replace(/\D/g, ''); continue; }
-    if ((v = field(line, 'Order No')) !== null) { out.orderNo = v.replace(/\D/g, ''); continue; }
+    if ((v = field(line, 'Order No')) !== null) { out.orderNo = v.split(/[^\d]+/).filter(Boolean).join(','); continue; }   // one report can carry several: "37748552,37748551"
     if ((v = field(line, 'Ordered On')) !== null) { out.orderedAt = hmisDate(v); continue; }
     if ((v = field(line, 'Sample Collected At')) !== null) { out.facility = v; continue; }
     if ((v = field(line, 'Sample Type')) !== null) { sample = v; panel = ''; continue; }

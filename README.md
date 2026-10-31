@@ -269,7 +269,11 @@ A Chrome/Edge extension copies the lab report a signed-in user is looking at
 in TN HMIS into Supabase (`lab_results`, `lab_orders`). It only acts when the
 user clicks; it never browses HMIS by itself.
 
-1. **Once, in Supabase → SQL Editor:** run `sql/lab_results.sql`.
+1. **Once, in Supabase → SQL Editor:** run `sql/lab_results.sql` (safe to
+   run again; it adds what a newer version needs).
+1. **Patients sheet:** a column headed **HMIS ID** holding each patient's TN
+   HMIS PIN (555…). A report is saved only to the one patient with its PIN;
+   it is never matched by name.
 2. **Once, the key:** `npx wrangler secret put LAB_IMPORT_KEY` (any random
    string of 16+ characters). Without it `/api/lab/import` answers 401.
 3. **Each PC:** `chrome://extensions` (or `edge://extensions`) → Developer

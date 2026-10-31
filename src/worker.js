@@ -30,6 +30,7 @@
 import { verifyFirebaseToken } from './auth.js';
 import { ledgerQueries, buildLedger, doctorsFrom, staffFromUsers, resolveScope, dayKey, todayIST } from './ledger.js';
 import { parseLabReport } from './labparse.js';
+import { findByPin } from './labmatch.js';
 import { rpc as appRpc, shell, notSetUp, hasApp, migrationStatus } from './app.js';
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), {
@@ -97,10 +98,17 @@ async function labImport(request, env) {
   if (!report.orderNo || !report.patient.pin || !report.results.length) {
     return json({ success: false, message: 'This does not look like a TN HMIS lab report (no PIN, Order No or results).', report }, 422);
   }
-  if (!body.save) return json({ success: true, saved: false, report });
+  // The CresRx patient with this HMIS ID: shown to check, and stored with the rows.
+  let patient = null, matchNote = '';
+  try { patient = await findByPin((fn, p) => rpc(env, fn, p), report.patient.pin); }
+  catch (e) { matchNote = e.message; }
+  if (patient && patient.duplicate) { matchNote = 'HMIS ID ' + report.patient.pin + ' is on more than one patient: ' + patient.duplicate.join(', ') + '. Fix that first.'; patient = null; }
+  else if (!patient && !matchNote) matchNote = 'No CresRx patient has HMIS ID ' + report.patient.pin + '. Add it to the patient, then read again.';
+  if (!body.save) return json({ success: true, saved: false, report, patient, matchNote });
+  if (!patient) return json({ success: false, message: matchNote, report }, 409);
   const by = String(body.by || '').slice(0, 80), source = String(body.source || '').slice(0, 500);
-  const saved = await rpc(env, 'lab_import', { report, by, source });
-  return json({ success: true, saved: true, rows: saved, report });
+  const saved = await rpc(env, 'lab_import', { report, by, source, patientId: patient.patientId });
+  return json({ success: true, saved: true, rows: saved, report, patient });
 }
 
 export default {

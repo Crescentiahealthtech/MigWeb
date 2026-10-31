@@ -26,9 +26,11 @@ async function post(text, source, save) {
   return out;
 }
 
-function show(r) {
+function show(r, m, note) {
   const p = r.patient;
-  $('preview').innerHTML = `<b>${esc(p.name)}</b> · ${esc(p.age)} ${esc(p.sex)} · PIN ${esc(p.pin)} · Order ${esc(r.orderNo)}
+  $('preview').innerHTML = (m ? `<div class="ok">→ CresRx patient <b>${esc(m.patientId)}</b> · ${esc(m.name)} · ${esc(m.age)} ${esc(m.sex)}</div>`
+      : `<div class="ab">${esc(note)}</div>`) +
+    `<b>${esc(p.name)}</b> · ${esc(p.age)} ${esc(p.sex)} · HMIS ID ${esc(p.pin)} · Order ${esc(r.orderNo)}
     <table><tr><th>Test</th><th>Result</th><th>Unit</th><th>Range</th></tr>${r.results.map((x) =>
       `<tr><td>${esc(x.panel ? x.panel + ' › ' : '')}${esc(x.test)}</td><td class="${x.abnormal ? 'ab' : ''}">${esc(x.value)}</td><td>${esc(x.unit)}</td><td>${esc(x.range)}</td></tr>`).join('')}
     </table>${r.orders.map((o) => `<div class="muted">${esc(o.test)}: ${esc(o.status)}</div>`).join('')}`;
@@ -39,9 +41,10 @@ async function readPdf(data, source) {
   const text = await pdfLines(pdfjs, data);
   const out = await post(text, source, false);
   pending = { text, source };
-  show(out.report);
-  say(out.report.results.length + ' results. Check them, then save.');
-  $('save').hidden = false;
+  show(out.report, out.patient, out.matchNote);
+  say(out.report.results.length + ' results. Check the patient and results, then save.');
+  $('save').hidden = !out.patient;
+  if (!out.patient) say('Not saved: no matching patient.');
 }
 
 const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { say(e.message); } };
