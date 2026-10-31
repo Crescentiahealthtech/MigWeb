@@ -96,7 +96,7 @@ export const FLUSH_AFTER = {
   saveDoctorSchedule: ['Doctor_Schedules'], addScheduleException: ['Doctor_Schedule_Exceptions'],
   deleteScheduleException: ['Doctor_Schedule_Exceptions'], setDoctorDayBlocks: ['Doctor_Schedule_Exceptions'],
   // Accounts: a changed Users row ends the stored sessions it was stored with.
-  crescSaveUserAccess: ['Users'], crescSetAccountActive: ['Users'], crescSetStaffEmail: ['Users', 'Doctors'], crescAdminResetPassword: ['Users'],
+  crescSaveUserAccess: ['Users'], crescSetAccountActive: ['Users'], crescSetStaffEmail: ['Users', 'Doctors'], crescSaveStaffProfile: ['Users', 'Doctors'], crescDeleteStaffAccount: ['Users', 'Doctors'], crescSetDoctorActive: ['Doctors'], crescAdminResetPassword: ['Users'],
   crescChangePassword: ['Users'], crescCreateStaffAccount: ['Users', 'Doctors'],
   // Finance Hub (its screens are answered from the copy: src/runner.js).
   // Every money write also leaves an entry in Audit_Event_Ledger (the audit
