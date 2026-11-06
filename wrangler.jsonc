@@ -29,6 +29,7 @@
   // refuses to build one without this block. A preview sends every call to
   // Apps Script (EDGE_OFF=all) and, given no Supabase key, never calls
   // Supabase, so it touches no data of its own.
+  "MIGRATION_BADGE": "off",
   "previews": {
     "vars": {
       "SUPABASE_URL": "https://bzjwdpxygozgdwpdzixr.supabase.co",
