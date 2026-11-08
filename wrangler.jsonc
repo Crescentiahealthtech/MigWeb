@@ -35,7 +35,7 @@
       "SUPABASE_URL": "https://bzjwdpxygozgdwpdzixr.supabase.co",
       "SUPABASE_REGION": "ap-south-1",
       "FIREBASE_PROJECT_ID": "cresrxdemo",
-      "MIGRATION_BADGE": "",
+      "MIGRATION_BADGE": "off",
       "EDGE_OFF": "all"
     }
   }
