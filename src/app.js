@@ -58,6 +58,7 @@ import { registerQuery, allPatients, masterDirectory, demographicsQuery, demogra
 import { Unsure, myPermissions, touchSession, pickerQuery, doctorPicker, profileQuery, userProfile,
          slotsDay, slotsQuery, doctorSlots, scheduleQuery, doctorSchedule } from './signin.js';
 import { RUNNER, WRITER, PUBLIC, viaRunner, viaSaver, savesWaiting, warmRunner, viaShell } from './runner.js';
+import { gasFetch, gasPaused, gasResult, noteLag, healthHeaders, pausedAnswer, SLOW_MS } from './breaker.js';
 
 // The page is kept at the edge for a week and served from there at once; one
 // older than SHELL_FRESH_SECONDS is fetched again in the background, so the
@@ -272,6 +273,10 @@ export const hasApp = (env) => EXEC_RE.test(execUrl(env));
 // ---------------------------------------------------------------------------
 
 export async function rpc(request, env, ctx, supabase) {
+  return healthHeaders(await rpcCall(request, env, ctx, supabase));
+}
+
+async function rpcCall(request, env, ctx, supabase) {
   if (request.method !== 'POST') return json({ ok: false, e: 'Method not allowed.' }, 405);
   const url = new URL(request.url);
   const origin = request.headers.get('Origin');
@@ -351,6 +356,8 @@ export async function rpc(request, env, ctx, supabase) {
     } else why = 'switched off (EDGE_OFF)';
   }
   if (fn === 'crescLogSignOut') await forget(bytes);
+  // Apps Script paused (src/breaker.js): not sent, and Supabase not asked either.
+  if (await gasPaused()) return pausedAnswer();
   let out = FLUSH_AFTER[fn] ? withFlush(bytes, FLUSH_AFTER[fn]) : bytes;
   // Saves made in Supabase not in the Sheet yet: Apps Script writes them in
   // first (doPost "drain"), so this call sees them as if made there.
@@ -368,7 +375,8 @@ export async function rpc(request, env, ctx, supabase) {
 const FLUSH_CARRIER = new TextEncoder().encode('{"fn":"getAppBuild","args":[]}');
 async function flushSoon(env, spec) {
   try {
-    const r = await fetch(execUrl(env), { method: 'POST', body: withFlush(FLUSH_CARRIER, spec), headers: { 'Content-Type': 'application/json' }, redirect: 'follow' });
+    if (await gasPaused()) return;   // the tick copies them once Apps Script is back
+    const r = await gasFetch(execUrl(env), { method: 'POST', body: withFlush(FLUSH_CARRIER, spec), headers: { 'Content-Type': 'application/json' }, redirect: 'follow' });
     if (r.body) await r.body.cancel();
   } catch (e) { /* the every-minute sync copies it */ }
 }
@@ -381,7 +389,8 @@ async function flushSoon(env, spec) {
 const DRAIN_CARRIER = new TextEncoder().encode('{"fn":"getAppBuild","args":[],"drain":true}');
 async function drainSoon(env) {
   try {
-    const r = await fetch(execUrl(env), { method: 'POST', body: DRAIN_CARRIER, headers: { 'Content-Type': 'application/json' }, redirect: 'follow' });
+    if (await gasPaused()) return;   // they wait in Supabase; the tick, or the next drain, writes them
+    const r = await gasFetch(execUrl(env), { method: 'POST', body: DRAIN_CARRIER, headers: { 'Content-Type': 'application/json' }, redirect: 'follow' });
     if (r.body) await r.body.cancel();
   } catch (e) { /* the every-minute tick writes them */ }
 }
@@ -432,7 +441,9 @@ async function forward(env, body, why) {
   let res;
   // Apps Script answers a POST with a redirect to the result; fetch follows
   // it (as a GET, which is what Google expects).
-  const call = () => fetch(execUrl(env), { method: 'POST', body, headers: { 'Content-Type': 'application/json' }, redirect: 'follow' });
+  if (await gasPaused()) return pausedAnswer();
+  const t0 = Date.now();
+  const call = () => gasFetch(execUrl(env), { method: 'POST', body, headers: { 'Content-Type': 'application/json' }, redirect: 'follow' }, true);
   // Google's sign-in page itself (not any page of Google's: its error pages
   // carry a sign-in link too).
   const SIGN_IN = /ServiceLogin|accounts\.google\.com\/(?:v3\/)?signin|<title>[^<]*sign in/i;
@@ -457,21 +468,49 @@ async function forward(env, body, why) {
   // doPost answers JSON (ContentService); anything else is Google's own
   // page (a sign-in, an error) and is read only to say which.
   if (/json/i.test(res.headers.get('Content-Type') || '')) {
-    return new Response(res.body, { status: 200, headers: secure(Object.assign({ 'Content-Type': 'application/json; charset=utf-8',
+    // Google's daily quota run out (doPost puts "quota" first: Web_Proxy.gs)
+    // counts as a failure: the answer itself goes on as it came.
+    const peek = await peekQuota(res.body);
+    if (res.status < 500 && !(Date.now() - t0 > SLOW_MS)) gasResult(!peek.quota);
+    return new Response(peek.body, { status: 200, headers: secure(Object.assign({ 'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store', 'X-CresRx-Source': 'apps-script' }, extra)) });
   }
   const out = early !== null ? early : await res.text();
   if (/^\s*\{/.test(out)) {
+    if (res.status < 500) gasResult(true);
     return new Response(out, { status: 200, headers: secure(Object.assign({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-CresRx-Source': 'apps-script' }, extra)) });
   }
+  if (res.status < 500) gasResult(false);   // Google's own page, not doPost's answer: counts as a failure (src/breaker.js)
   return json({ ok: false, e: SIGN_IN.test(out)
     ? 'The app server asks for a Google sign-in: set the deployment\'s access to "Anyone" and deploy again.'
     : 'The app server gave no answer (deploy the latest version of the app). Status ' + res.status + '.' }, 502);
 }
 
+/**
+ * The answer's body as it came, its first bytes looked at: doPost begins
+ * {"quota":true when a Google quota stopped the call (Web_Proxy.gs), and
+ * that counts against Apps Script in the breaker (src/breaker.js).
+ */
+async function peekQuota(body) {
+  if (!body || typeof body.getReader !== 'function') return { body, quota: false };
+  const reader = body.getReader();
+  let first;
+  try { first = await reader.read(); } catch (e) { reader.releaseLock(); return { body: null, quota: false }; }
+  const quota = !!(first.value && /^\s*\{"quota":true/.test(new TextDecoder().decode(first.value.subarray(0, 32))));
+  return { quota, body: new ReadableStream({
+    start(c) { if (first.value) c.enqueue(first.value); if (first.done) c.close(); },
+    async pull(c) {
+      const { value, done } = await reader.read();
+      if (done) c.close(); else c.enqueue(value);
+    },
+    cancel(why) { return reader.cancel(why); }
+  }) };
+}
+
 /** One server call to Apps Script from here, its value or null. */
 async function appsScript(env, fn, args) {
-  const res = await fetch(execUrl(env), { method: 'POST', body: JSON.stringify({ fn, args }),
+  if (await gasPaused()) return null;
+  const res = await gasFetch(execUrl(env), { method: 'POST', body: JSON.stringify({ fn, args }),
                                           headers: { 'Content-Type': 'application/json' }, redirect: 'follow' });
   const t = await res.text();
   if (!/^\s*\{/.test(t)) return null;
@@ -485,7 +524,8 @@ async function appsScript(env, fn, args) {
  * is hundreds of kilobytes: parsing it would spend the CPU allowance).
  */
 async function appsScriptQuietly(env, fn, args) {
-  const res = await fetch(execUrl(env), { method: 'POST', body: JSON.stringify({ fn, args }),
+  if (await gasPaused()) return;
+  const res = await gasFetch(execUrl(env), { method: 'POST', body: JSON.stringify({ fn, args }),
                                           headers: { 'Content-Type': 'application/json' }, redirect: 'follow' });
   try { if (res.body) await res.body.cancel(); } catch (e) { /* nothing to read */ }
 }
@@ -545,6 +585,7 @@ export async function identity(token, env, ctx, supabase) {
   if (supabase) {
     try {
       const row = await supabase('session_get', { hash: h });
+      if (row) noteLag(row.lag);
       if (row && row.identity && typeof row.identity === 'object') {
         id = normal(row.identity);
         if (Number(row.age) > IDENTITY_REFRESH_MS && !((REFRESHED.get(h) || 0) > now - 60000)) {
@@ -934,7 +975,8 @@ export async function shell(request, env, ctx) {
     if (hit) {
       html = await hit.text();
       const at = Number(hit.headers.get('X-Shell-At') || 0);
-      if (!at || Date.now() - at > SHELL_FRESH_SECONDS * 1000) ctx.waitUntil(load());
+      // Each refresh is an Apps Script run: none while it is paused (src/breaker.js).
+      if ((!at || Date.now() - at > SHELL_FRESH_SECONDS * 1000) && !(await gasPaused())) ctx.waitUntil(load());
     }
   }
   if (!html) html = await load();
@@ -946,6 +988,13 @@ export async function shell(request, env, ctx) {
   }
   // TEMPORARY, while screens move off Apps Script: the status badge
   // (public/migration/status.js). Remove this line and that file when done.
+  // The banner every member of staff sees when the Google Sheet side is
+  // behind or paused (public/s/backup.js; src/breaker.js says when).
+  {
+    const tag = '<script src="/s/backup.js"></script>';
+    const at = /<head[^>]*>/i.test(html) ? /<head[^>]*>/i : /<html[^>]*>/i;
+    html = at.test(html) ? html.replace(at, (h) => h + tag) : tag + html;
+  }
   if (String(env.MIGRATION_BADGE || '').toLowerCase() !== 'off') {
     const tag = '<script src="/migration/status.js"></script>';
     const at = /<head[^>]*>/i.test(html) ? /<head[^>]*>/i : /<html[^>]*>/i;
