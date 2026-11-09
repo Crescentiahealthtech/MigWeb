@@ -101,9 +101,9 @@ test('the page is given the banner script', async () => {
   assert.match(await page.text(), /<script src="\/s\/backup.js"><\/script>/);
 });
 
-test('the banner headers: minutes behind from 15, nothing below, nothing once the news is old', async () => {
+test('the banner headers: minutes behind from 25, nothing below, nothing once the news is old', async () => {
   resetBreaker();
-  noteLag(14 * 60);
+  noteLag(24 * 60);
   assert.equal((await healthHeaders(new Response('x'))).headers.get('X-CresRx-Behind'), null);
   noteLag(42 * 60 + 30);
   assert.equal((await healthHeaders(new Response('x'))).headers.get('X-CresRx-Behind'), '42');

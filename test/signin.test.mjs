@@ -206,7 +206,7 @@ test('a screen bundle comes from Supabase for the page\'s own build; the first o
   assert.equal(r.source, 'supabase');
   assert.deepEqual(r.v, data);
   assert.deepEqual(log.apps, []);
-  ({ log, ctx, settle } = network({ snapshots: { 'bundle:a1b2c3d4e5f6:patients': { data, age: 4 * 60000 } } }));
+  ({ log, ctx, settle } = network({ snapshots: { 'bundle:a1b2c3d4e5f6:patients': { data, age: 7 * 3600000 } } }));
   assert.equal((await call('crescGetBundle', ['patients'], ctx, { headers })).source, 'supabase');
   await settle();
   assert.deepEqual(log.apps, [{ fn: 'crescGetBundle', args: ['patients', 'a1b2c3d4e5f6'] }]);   // re-read in the background
@@ -382,3 +382,18 @@ test('the build check, the consent notice and the letterhead from the Edge Funct
   assert.deepEqual(await call('getDPDPNotice', [], ctx), { source: 'supabase', why: null, age: '1', v: notice });
 });
 
+
+test('a screen bundle, once served, comes from the edge cache for that build: no Supabase, no Apps Script', async () => {
+  const data = { success: true, name: 'patients', html: '<div>p</div>', message: '' };
+  const { log, ctx, settle } = network({ snapshots: { 'bundle:a1b2c3d4e5f6:patients': { data, age: 1000 } } });
+  const store = new Map();
+  globalThis.caches = { default: { match: async (k) => { const r = store.get(String(k)); return r ? r.clone() : undefined; },
+                                   put: async (k, r) => { store.set(String(k), r); }, delete: async () => true } };
+  const headers = { cookie: 'cresrx_build=a1b2c3d4e5f6' };
+  assert.equal((await call('crescGetBundle', ['patients'], ctx, { headers })).source, 'supabase');
+  await settle();
+  const again = await call('crescGetBundle', ['patients'], ctx, { headers });
+  assert.equal(again.source, 'edge-cache');
+  assert.deepEqual(again.v, data);
+  assert.deepEqual(log.apps, []);
+});
