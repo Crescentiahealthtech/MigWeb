@@ -65,7 +65,7 @@ import { gasFetch, gasPaused, gasResult, noteLag, healthHeaders, pausedAnswer, S
 // next visitor has the new one (the app's own build check offers a reload
 // when a newer build is deployed). Before, it was kept 20 s, and the first
 // visitor after that waited for Apps Script to build it (about 5 s).
-const SHELL_FRESH_SECONDS = 20;
+const SHELL_FRESH_SECONDS = 300;   // each refresh is an Apps Script run; a new build is still picked up (?v=, the build check)
 const SHELL_KEEP_SECONDS = 7 * 24 * 3600;
 const IDENTITY_MEMO_MS = 15 * 1000;            // a session looked up in Supabase, remembered by this instance
 const IDENTITY_REFRESH_MS = 10 * 60 * 1000;    // stored longer ago than this: Apps Script re-checks it, in the background
@@ -697,10 +697,10 @@ async function patientRead(token, permission, env, ctx, supabase, queries, port,
 
 const DASH_FRESH_MS = 60 * 1000;          // older than this: Apps Script computes a new one, in the background
 const DASH_FRESH_ASKED_MS = 15 * 1000;    // …or this, when the screen was opened or Refresh pressed
-const BUNDLE_FRESH_MS = 3 * 60 * 1000;    // a screen bundle is re-read from Apps Script after this
+const BUNDLE_FRESH_MS = 6 * 3600 * 1000;   // a screen's markup is fixed per build (Module_Loader.gs): re-read only as a safety net
 const BUILD_FRESH_MS = 5 * 60 * 1000;
-const NOTICE_FRESH_MS = 10 * 60 * 1000;
-const CLINIC_FRESH_MS = 10 * 60 * 1000;
+const NOTICE_FRESH_MS = 60 * 60 * 1000;
+const CLINIC_FRESH_MS = 30 * 60 * 1000;
 
 /**
  * A stored answer, `make(dataText, age)` turning it into the reply; or null
@@ -808,9 +808,27 @@ async function bundle([name], env, ctx, supabase, request) {
   // build's markup whatever build the page is, so it is the same answer.
   const build = mine || await deployedBuild(supabase);
   if (!build) throw new Unsure('the page\'s build is not known');
+  // The edge's own copy first: a build's markup never changes, so it is kept
+  // a day in this Cloudflare location and no one waits for Supabase for it.
+  const edgeKey = 'https://edge.cresrx.invalid/bundle/' + build + '/' + n;
+  const cache = edgeCache();
+  if (cache) {
+    try {
+      const e = await cache.match(edgeKey);
+      if (e) return raw(await e.text(), { 'X-CresRx-Source': 'edge-cache' });
+    } catch (e) { /* the cache is a help, not the rule */ }
+  }
   const hit = await stored('bundle:' + build + ':' + n, BUNDLE_FRESH_MS,
     () => appsScriptQuietly(env, 'crescGetBundle', [n, build]), ctx, supabase, plain);
-  if (hit) return hit;
+  if (hit) {
+    if (cache) {
+      try {
+        const text = await hit.clone().text();
+        if (/^\{"ok":true/.test(text)) later(ctx, 'edge-cache ' + n, cache.put(edgeKey, new Response(text, { headers: { 'Cache-Control': 'max-age=86400' } })));
+      } catch (e) { /* nothing */ }
+    }
+    return hit;
+  }
   return forward(env, new TextEncoder().encode(JSON.stringify({ fn: 'crescGetBundle', args: [n, build] })), 'not stored yet');
 }
 
@@ -826,6 +844,10 @@ async function servedShell(request) {
     try { if (hit.body) await hit.body.cancel(); } catch (e) { /* not read */ }
     return out;
   } catch (e) { return null; }
+}
+
+function edgeCache() {
+  try { return (typeof caches !== 'undefined' && caches.default) ? caches.default : null; } catch (e) { return null; }
 }
 
 /** The build deployed now, as Apps Script last stored it (getAppBuild), or ''. */

@@ -197,7 +197,7 @@ test('the page comes from the edge at once, and one older than a few seconds is 
   assert.match(first, /abc121/);
   // Stored a minute ago: served as it is, the new one fetched in the background.
   const old = store.get('https://migweb.example/__shell__');
-  store.set('https://migweb.example/__shell__', new Response(await old.text(), { headers: { 'X-Shell-At': String(Date.now() - 60000) } }));
+  store.set('https://migweb.example/__shell__', new Response(await old.text(), { headers: { 'X-Shell-At': String(Date.now() - 10 * 60000) } }));
   const second = await (await worker.fetch(new Request('https://migweb.example/'), env(), c)).text();
   assert.match(second, /abc121/);
   await Promise.all(waits);

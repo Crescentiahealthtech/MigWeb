@@ -47,7 +47,7 @@
       var paused = res.headers.get('X-CresRx-Backup') === 'paused';
       var behind = Number(res.headers.get('X-CresRx-Behind') || 0);
       if (paused) draw('The Google Sheet backup is paused for a few minutes. You can keep working: saves are kept and copied to the Sheet when it is back.');
-      else if (behind >= 15) draw('The Google Sheet backup is ' + (behind >= 120 ? Math.floor(behind / 60) + ' hours' : behind + ' minutes') +
+      else if (behind >= 25) draw('The Google Sheet backup is ' + (behind >= 120 ? Math.floor(behind / 60) + ' hours' : behind + ' minutes') +
                                   ' behind. You can keep working: saves are kept and copied to the Sheet when it catches up.');
       else draw('');
     } catch (e) { /* the banner is a help, never in the way */ }

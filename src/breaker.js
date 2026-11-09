@@ -16,7 +16,7 @@
 //
 // The page's banner (public/s/backup.js) reads two headers on every /rpc
 // answer: X-CresRx-Behind (minutes since the Sheet sync last ran, from the
-// Supabase heartbeat, when it is 15 or more) and X-CresRx-Backup: paused
+// Supabase heartbeat, when it is 25 or more: the sync ticks every 15) and X-CresRx-Backup: paused
 // (the breaker is open).
 // ============================================================================
 
@@ -112,7 +112,7 @@ export async function healthHeaders(res) {
   if (!res || !res.headers) return res;
   try {
     if (await gasPaused()) res.headers.set('X-CresRx-Backup', 'paused');
-    if (state.lagS !== null && Date.now() - state.lagAt < 10 * 60 * 1000 && state.lagS >= 15 * 60) {
+    if (state.lagS !== null && Date.now() - state.lagAt < 10 * 60 * 1000 && state.lagS >= 25 * 60) {
       res.headers.set('X-CresRx-Behind', String(Math.floor(state.lagS / 60)));
     }
   } catch (e) { /* an answer whose headers cannot change: it goes as it is */ }
